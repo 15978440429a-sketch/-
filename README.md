@@ -17,6 +17,8 @@
 3. 在项目根目录执行 `./gradlew assembleDebug`（Windows 命令提示符执行 `gradlew.bat assembleDebug`），或点击 **Build > Build App Bundle(s) / APK(s) > Build APK(s)**。
 4. 调试 APK 输出为 `app/build/outputs/apk/debug/app-debug.apk`。连接并授权手机后执行 `adb install -r app/build/outputs/apk/debug/app-debug.apk`，也可将 APK 发送到手机并在系统提示下安装。安卓 8.0 及以上可运行。
 
+如果手机已经安装本项目较早交付的 **1.0 调试版**，安装 1.1 时会因云端调试证书不同而提示“签名不一致”或“应用未安装”。请先复制旧版编辑框里尚未保存的重要文本，再卸载旧版，然后安装 1.1。GitHub 临时构建机生成的调试签名可能随构建改变，因此不同云端调试包之间也可能需要先卸载；正式发布或持续升级时应配置自己保管的发布签名。
+
 项目附带 Gradle 9.6.0 官方标准 wrapper JAR 和启动脚本；wrapper JAR 已核对官方 SHA-256。它会按 `gradle-wrapper.properties` 下载 Gradle 9.6.0，并校验发行包 SHA-256。首次构建还需联网下载 SDK/Gradle/Maven 依赖。
 
 ### 不在本机安装 Android Studio：使用 GitHub Actions
