@@ -412,8 +412,7 @@ class ReaderViewModel(
             showError(app.getString(R.string.error_server_url))
             return
         }
-        val server = if (state.voiceId == CUSTOM) state.serverUrl.trim()
-        else OnlineSpeechClient.PUBLIC_ENDPOINT
+        val customServer = state.serverUrl.trim()
         val speaker = option.onlineSpeaker ?: state.speaker.trim()
         _uiState.value = _uiState.value.copy(
             busy = true,
@@ -436,12 +435,28 @@ class ReaderViewModel(
                         segment,
                         app.getString(R.string.status_requesting, index + 1, segments.size)
                     )
-                    val file = online.synthesize(
-                        server,
-                        OnlineSpeechClient.Parameters(
-                            segment.text, speaker, state.format, state.noise, state.length
-                        )
+                    val parameters = OnlineSpeechClient.Parameters(
+                        segment.text, speaker, state.format, state.noise, state.length
                     )
+                    val file = if (state.voiceId == CUSTOM) {
+                        online.synthesize(customServer, parameters)
+                    } else {
+                        online.synthesizeFirstAvailable(
+                            OnlineSpeechClient.PUBLIC_ENDPOINTS,
+                            parameters
+                        ) { attempt, _ ->
+                            if (attempt > 1) {
+                                showActiveSegment(
+                                    segment,
+                                    app.getString(
+                                        R.string.status_retrying_public,
+                                        index + 1,
+                                        segments.size
+                                    )
+                                )
+                            }
+                        }
+                    }
                     try {
                         showActiveSegment(
                             segment,
@@ -562,6 +577,8 @@ class ReaderViewModel(
     }
 
     private fun onlineError(error: Exception): String = when (error) {
+        is OnlineSpeechClient.AllServersUnavailable ->
+            app.getString(R.string.error_public_service)
         is OnlineSpeechClient.HttpFailure -> app.getString(R.string.error_http, error.code)
         is OnlineSpeechClient.InvalidAudio -> app.getString(R.string.error_non_audio)
         is OnlineSpeechClient.AudioTooLarge -> app.getString(R.string.error_audio_too_large)
