@@ -30,7 +30,7 @@ class AudioFilePlayer {
                 player = null
                 continuation = null
             }
-            media.release()
+            runCatching { media.release() }
         }
 
         fun fail(error: Throwable) {
@@ -73,7 +73,7 @@ class AudioFilePlayer {
     fun stop() {
         continuation?.cancel()
         // Cancellation normally releases the player; this also covers a completed continuation.
-        player?.release()
+        runCatching { player?.release() }
         player = null
         continuation = null
     }

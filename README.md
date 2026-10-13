@@ -1,13 +1,13 @@
 # 文字朗读
 
-单模块 Android 应用（Kotlin / Jetpack Compose Material 3 / MVVM / StateFlow）。基础朗读调用设备安装的系统 `TextToSpeech` 引擎；可选神里绫华、优菈和可莉在线音色通过第三方 VITS 接口合成音频。无账号、广告、API Key 或收费接口，也不附带角色音频和模型。
+单模块 Android 应用（Kotlin / Jetpack Compose Material 3 / MVVM / StateFlow）。基础朗读调用设备安装的系统 `TextToSpeech` 引擎；可选神里绫华、优菈和可莉在线音色通过第三方 VITS 接口合成音频。应用提供文稿播放列表、顺序播放、单曲循环和随机播放，并在朗读时标出当前文稿、突出显示当前句子。无账号、广告、API Key 或收费接口，也不附带角色音频和模型。
 
 ## 环境与项目结构
 
 - Android Studio 稳定版（建议 Rabbit 1 或兼容 AGP 9.4 的版本）、JDK 17、Android SDK Platform 37。
 - Gradle 9.6.0、Android Gradle Plugin 9.4.0、Compose BOM 2026.09.00、Kotlin Compose Compiler 插件 2.4.10。
 - `minSdk 26`，`compileSdk 37`，`targetSdk 37`，包名 `com.example.texttospeech`。
-- `app/src/main/java/com/example/texttospeech/`: `MainActivity.kt` 是 Compose 界面；`ReaderViewModel.kt` 负责状态、旋转恢复和任务取消；`tts/SystemTtsManager.kt` 使用系统 TTS；`network/OnlineSpeechClient.kt` 通过 OkHttp 下载音频；`playback/AudioFilePlayer.kt` 播放缓存文件；`util/TextSegmenter.kt` 分段；`model/VoiceOption.kt` 定义状态。
+- `app/src/main/java/com/example/texttospeech/`: `MainActivity.kt` 是 Compose 界面；`ReaderViewModel.kt` 负责状态、播放队列和任务取消；`tts/SystemTtsManager.kt` 使用系统 TTS；`network/OnlineSpeechClient.kt` 通过 OkHttp 下载音频；`playback/AudioFilePlayer.kt` 播放缓存文件；`util/TextSegmenter.kt` 分段并定位当前句子；`storage/` 是独立进程中的 SQLite 文稿存储；`model/VoiceOption.kt` 定义状态。
 - `app/src/main/res/values/strings.xml` 是中文文案；`USER_AGREEMENT.md` 是完整用户协议。
 
 ## 打开、构建与安装
@@ -34,10 +34,19 @@
 
 ## 使用方法
 
-1. 输入文本。默认选中“系统默认（离线）”，点击“播放”。系统 TTS 会根据设备上**实际安装**的离线语音包朗读，自动分段；“停止”立即中断。无可用中文离线语音时，点击“安装语音数据”并在系统设置中下载中文语音包；返回应用后会重新初始化引擎并刷新可用音色。某些设备还需在系统设置里启用/更换 TTS 引擎。
-2. 点击“已选：系统默认（离线）”打开音色管理，查看语言、类型和来源。选择“神里绫华（在线）”、“优菈（在线）”或“可莉（在线）”，输入文本并点击“播放”；此时文本经网络发送到下方公开 API 并播放返回的 MP3/WAV。选择后对**下次**播放生效。
-3. 系统 TTS 语言在下拉框中选择。语速、音调范围均为 0.5x–2.0x，调整后下次系统朗读生效。在线音色另有 `noise`、`length` 和 MP3/WAV 设置；`length` 值越大朗读越慢。
-4. 若有自建服务，选择“自定义音色（在线）”，填写服务器根地址和服务端识别的 `speaker` 名称。它必须支持下述同一 GET 查询协议；GPT-SoVITS 的不同 WebUI 接口通常需要自行编写一个兼容适配层。
+1. 输入文本。当前草稿会在输入后自动保存，退出应用再打开也会恢复。默认选中“系统默认（离线）”，点击“播放”。系统 TTS 会根据设备上**实际安装**的离线语音包朗读并自动分段；“停止”立即中断。朗读期间，状态区下方会显示当前文稿并突出显示正在朗读的句子。
+2. 点“保存文稿”把当前内容加入“文稿播放列表”。点“新建”开始另一篇，点列表里的“打开”可以切换文稿。重新编辑已打开的文稿后，再点“保存文稿”会更新这一篇。删除文稿前应用会再次确认。
+3. 播放模式可选择“顺序播放”“单曲循环”或“随机播放”。顺序播放会从当前文稿继续到下一篇，到列表末尾停止；单曲循环会反复朗读当前内容；随机播放会从已保存文稿中随机选择。按“停止”会取消后续自动播放。
+4. 点击“已选：系统默认（离线）”打开音色管理，查看语言、类型和来源。选择“神里绫华（在线）”、“优菈（在线）”或“可莉（在线）”，输入文本并点击“播放”；此时文本经网络发送到下方公开 API 并播放返回的 MP3/WAV。选择后对**下次**播放生效。
+5. 无可用中文离线语音时，点击“安装语音数据”并在系统设置中下载中文语音包；返回应用后会重新初始化引擎并刷新可用音色。某些设备还需在系统设置里启用或更换 TTS 引擎。系统 TTS 语言可从下拉框选择；语速、音调范围均为 0.5x–2.0x。
+6. 在线音色另有 `noise`、`length` 和 MP3/WAV 设置；`length` 值越大朗读越慢。若有自建服务，选择“自定义音色（在线）”，填写服务器根地址和服务端识别的 `speaker` 名称。GPT-SoVITS 的不同 WebUI 接口通常需要自行编写兼容适配层。
+
+## 文本保存与多进程说明
+
+- 清单中的 `TextStoreProvider` 声明为 `android:process=":text_storage"`，因此 SQLite 数据库的读取与写入发生在独立的应用进程，界面进程通过 `ContentResolver` 访问它。
+- 编辑框是自动保存的草稿；文稿播放列表是用户点“保存文稿”后建立的独立条目。两者都会保存在应用私有 SQLite 数据库中，关闭界面、结束界面进程或旋转屏幕后仍可恢复。
+- 每次保存带有递增版本号，独立进程会拒绝较旧的并发写入，避免快速输入或退出时旧内容覆盖新内容。`Activity.onStop()` 还会执行一次最终保存。
+- 数据只保存在本机应用私有目录。卸载应用或在系统设置中“清除存储空间”会删除这些内容；应用没有云同步功能。
 
 公开接口示例（参数由客户端进行 URL 编码）：
 
@@ -59,11 +68,13 @@ http://233366.proxy.nscc-gz.cn:8888/?text=你好&speaker=神里绫华&format=mp3
 
 ## 权限、隐私与已知限制
 
-- 只声明 `INTERNET` 权限。系统 TTS 不需要网络权限；在线音色必须联网。输入的在线文本会发送给所选第三方或自建服务器。
+- 只声明 `INTERNET` 权限。文本保存使用应用私有数据库，不需要存储权限。系统 TTS 不需要网络权限；在线音色必须联网。输入的在线文本会发送给所选第三方或自建服务器。
 - 公开接口仅提供 **HTTP**，没有传输加密。为了兼容它和用户的局域网 HTTP 服务，应用允许明文 HTTP；请勿将敏感文本提交在线合成。自建服务建议部署 HTTPS。应用不将生成的音频永久保存；临时音频播放后删除。
 - 公共 API 由第三方维护，无法保证持续可用、响应质量或特定音色始终存在；网络环境也可能阻断该地址。在线失败时可在状态区点“切换到系统离线音色”；设备须先安装相应语音数据。
 - 未集成 Sherpa-ONNX：单个 `.onnx` 文件通常不足以运行端侧 TTS，还需要兼容的模型结构、配置、词表/分词与前后处理，以及设备性能和授权验证。目前没有已确认可直接用于 Sherpa-ONNX 的神里绫华模型，因此不提供虚假的模型导入或离线角色音色。
-- 系统 `TextToSpeech` 不支持可靠的原生暂停，本项目仅提供播放和停止。关闭或旋转 Activity 时会停止播放并 `shutdown()`；文本和设置由 ViewModel/SavedStateHandle 保持，极长文本在进程被系统杀死时仍受 Android 保存状态大小限制。
+- 系统 `TextToSpeech` 不支持可靠的原生暂停，本项目仅提供播放和停止。关闭或旋转 Activity 时会停止播放并 `shutdown()`。编辑文本和播放模式由独立存储进程保存，不依赖 Android 状态 Bundle，因此长文本也不会因 Bundle 大小限制而被截断。
+- 播放模式在一篇文稿正常朗读完成后生效；发生网络/TTS 错误或用户点“停止”时不会自动跳到下一篇。顺序播放到最后一篇后停止，并非列表循环。
+- 切换音色闪退修复包含两层保护：系统引擎返回的重名音色会去重，界面列表不再使用可能重复的音色 ID 作为 Compose 唯一键；厂商 TTS 引擎的停止、切换和释放异常也会被转换为界面错误提示。
 
 ## 版权与使用条件
 
@@ -94,6 +105,9 @@ app/src/main/java/com/example/texttospeech/ReaderViewModel.kt
 app/src/main/java/com/example/texttospeech/model/VoiceOption.kt
 app/src/main/java/com/example/texttospeech/network/OnlineSpeechClient.kt
 app/src/main/java/com/example/texttospeech/playback/AudioFilePlayer.kt
+app/src/main/java/com/example/texttospeech/storage/TextRepository.kt
+app/src/main/java/com/example/texttospeech/storage/TextStoreContract.kt
+app/src/main/java/com/example/texttospeech/storage/TextStoreProvider.kt
 app/src/main/java/com/example/texttospeech/tts/SystemTtsManager.kt
 app/src/main/java/com/example/texttospeech/util/TextSegmenter.kt
 app/src/main/res/values/strings.xml

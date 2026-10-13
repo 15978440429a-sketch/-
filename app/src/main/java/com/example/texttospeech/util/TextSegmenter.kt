@@ -4,6 +4,8 @@ import java.text.BreakIterator
 import java.util.Locale
 
 object TextSegmenter {
+    data class Segment(val text: String, val start: Int, val endExclusive: Int)
+
     fun split(text: String, maxLength: Int): List<String> {
         require(maxLength >= 2)
         if (text.isBlank()) return emptyList()
@@ -47,5 +49,16 @@ object TextSegmenter {
         }
         flush()
         return result
+    }
+
+    fun splitWithRanges(text: String, maxLength: Int): List<Segment> {
+        var searchFrom = 0
+        return split(text, maxLength).map { piece ->
+            val found = text.indexOf(piece, searchFrom)
+            val start = if (found >= 0) found else searchFrom.coerceAtMost(text.length)
+            val end = (start + piece.length).coerceAtMost(text.length)
+            searchFrom = end
+            Segment(piece, start, end)
+        }
     }
 }

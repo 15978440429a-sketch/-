@@ -11,6 +11,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,15 +26,17 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -54,12 +57,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.texttospeech.model.CUSTOM
+import com.example.texttospeech.model.PlaybackMode
 import com.example.texttospeech.model.SYSTEM_DEFAULT
+import com.example.texttospeech.model.SavedText
 import com.example.texttospeech.model.UiState
 import com.example.texttospeech.model.VoiceOption
 
@@ -68,7 +78,6 @@ class MainActivity : ComponentActivity() {
     private val voiceDataLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
-        // Voice packages may have been installed without recreating this Activity.
         reader.attachActivity()
     }
 
@@ -106,8 +115,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStop() {
+        reader.persistNowBlocking()
+        super.onStop()
+    }
+
     override fun onDestroy() {
-        reader.detachActivity() // Also runs on rotation; the new Activity starts a fresh engine.
+        reader.detachActivity()
         super.onDestroy()
     }
 }
@@ -118,20 +132,28 @@ private fun ReaderScreen(reader: ReaderViewModel, installVoiceData: () -> Unit) 
     var voiceDialog by remember { mutableStateOf(false) }
     var agreementDialog by remember { mutableStateOf(false) }
     var languageMenu by remember { mutableStateOf(false) }
+    var pendingDeleteId by remember { mutableStateOf<Long?>(null) }
     val selected = ui.voices.firstOrNull { it.id == ui.voiceId }
     val online = selected?.online == true
 
     Column(
-        modifier = Modifier.fillMaxSize().safeDrawingPadding().imePadding()
-            .verticalScroll(rememberScrollState()).padding(16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .safeDrawingPadding()
+            .imePadding()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        Text(stringResource(R.string.app_name), style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold)
+        Text(
+            stringResource(R.string.app_name),
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold
+        )
         OutlinedTextField(
             value = ui.text,
             onValueChange = reader::updateText,
-            modifier = Modifier.fillMaxWidth().heightIn(min = 220.dp),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 220.dp).testTag("text_input"),
             label = { Text(stringResource(R.string.input_label)) },
             placeholder = { Text(stringResource(R.string.input_hint)) },
             minLines = 7
@@ -142,10 +164,18 @@ private fun ReaderScreen(reader: ReaderViewModel, installVoiceData: () -> Unit) 
             modifier = Modifier.align(Alignment.End)
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = reader::play, enabled = ui.text.isNotBlank(), modifier = Modifier.weight(1f)) {
+            Button(
+                onClick = reader::play,
+                enabled = ui.text.isNotBlank(),
+                modifier = Modifier.weight(1f).testTag("play_button")
+            ) {
                 Text(stringResource(R.string.play))
             }
-            OutlinedButton(onClick = { reader.stop() }, enabled = ui.busy, modifier = Modifier.weight(1f)) {
+            OutlinedButton(
+                onClick = { reader.stop() },
+                enabled = ui.busy,
+                modifier = Modifier.weight(1f).testTag("stop_button")
+            ) {
                 Text(stringResource(R.string.stop))
             }
             OutlinedButton(onClick = reader::clearText, enabled = ui.text.isNotEmpty()) {
@@ -153,38 +183,41 @@ private fun ReaderScreen(reader: ReaderViewModel, installVoiceData: () -> Unit) 
             }
         }
 
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(stringResource(R.string.status_title), style = MaterialTheme.typography.titleMedium)
-                Text(ui.status, style = MaterialTheme.typography.bodyLarge)
-                if (ui.ttsReady && !ui.chineseAvailable) {
-                    OutlinedButton(onClick = installVoiceData) {
-                        Text(stringResource(R.string.install_data))
-                    }
-                }
-                if (online && ui.ttsReady && ui.languages.isNotEmpty()) {
-                    TextButton(onClick = { reader.selectVoice(SYSTEM_DEFAULT) }) {
-                        Text(stringResource(R.string.switch_offline))
-                    }
-                }
-            }
+        StatusCard(ui, reader, installVoiceData, online)
+        if (ui.busy && ui.highlightStart >= 0 && ui.highlightEnd > ui.highlightStart) {
+            NowReadingCard(ui)
         }
 
+        PlaybackModeSection(ui, reader)
+        TextLibrarySection(ui, reader, onDelete = { pendingDeleteId = it })
+
         Text(stringResource(R.string.voice_settings), style = MaterialTheme.typography.titleLarge)
-        OutlinedButton(onClick = { voiceDialog = true }, modifier = Modifier.fillMaxWidth()) {
-            Text(stringResource(R.string.voice_selected, selected?.name ?: stringResource(R.string.offline_default)))
+        OutlinedButton(
+            onClick = { voiceDialog = true },
+            modifier = Modifier.fillMaxWidth().testTag("voice_selector")
+        ) {
+            Text(
+                stringResource(
+                    R.string.voice_selected,
+                    selected?.name ?: stringResource(R.string.offline_default)
+                )
+            )
         }
-        if (selected != null) {
-            VoiceDetail(selected)
-        }
+        if (selected != null) VoiceDetail(selected)
         if (online) {
-            Text(stringResource(R.string.network_warning), color = MaterialTheme.colorScheme.secondary,
-                style = MaterialTheme.typography.bodySmall)
+            Text(
+                stringResource(R.string.network_warning),
+                color = MaterialTheme.colorScheme.secondary,
+                style = MaterialTheme.typography.bodySmall
+            )
         }
 
         Text(stringResource(R.string.language), style = MaterialTheme.typography.titleMedium)
         Box {
-            OutlinedButton(onClick = { languageMenu = true }, enabled = ui.languages.isNotEmpty()) {
+            OutlinedButton(
+                onClick = { languageMenu = true },
+                enabled = ui.languages.isNotEmpty()
+            ) {
                 Text(ui.languages.firstOrNull { it.tag == ui.languageTag }?.label ?: ui.languageTag)
             }
             DropdownMenu(expanded = languageMenu, onDismissRequest = { languageMenu = false }) {
@@ -208,9 +241,7 @@ private fun ReaderScreen(reader: ReaderViewModel, installVoiceData: () -> Unit) 
         Slider(value = ui.pitch, onValueChange = reader::setPitch, valueRange = 0.5f..2f, steps = 14)
         Text(stringResource(R.string.settings_next_play), style = MaterialTheme.typography.bodySmall)
 
-        if (online) {
-            OnlineSettings(ui, reader)
-        }
+        if (online) OnlineSettings(ui, reader)
         Spacer(Modifier.height(4.dp))
         TextButton(onClick = { agreementDialog = true }) {
             Text(stringResource(R.string.agreement))
@@ -218,30 +249,13 @@ private fun ReaderScreen(reader: ReaderViewModel, installVoiceData: () -> Unit) 
     }
 
     if (voiceDialog) {
-        AlertDialog(
-            onDismissRequest = { voiceDialog = false },
-            title = { Text(stringResource(R.string.voice_select)) },
-            text = {
-                LazyColumn(Modifier.heightIn(max = 440.dp)) {
-                    items(ui.voices, key = { it.id }) { voice ->
-                        Row(Modifier.fillMaxWidth().padding(vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically) {
-                            RadioButton(
-                                selected = ui.voiceId == voice.id,
-                                onClick = { reader.selectVoice(voice.id); voiceDialog = false }
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Column {
-                                Text(voice.name, style = MaterialTheme.typography.bodyLarge)
-                                VoiceDetail(voice)
-                            }
-                        }
-                    }
-                }
+        VoicePickerDialog(
+            ui = ui,
+            onSelect = {
+                reader.selectVoice(it)
+                voiceDialog = false
             },
-            confirmButton = {
-                TextButton(onClick = { voiceDialog = false }) { Text(stringResource(R.string.close)) }
-            }
+            onDismiss = { voiceDialog = false }
         )
     }
     if (agreementDialog) {
@@ -255,10 +269,250 @@ private fun ReaderScreen(reader: ReaderViewModel, installVoiceData: () -> Unit) 
                 )
             },
             confirmButton = {
-                TextButton(onClick = { agreementDialog = false }) { Text(stringResource(R.string.close)) }
+                TextButton(onClick = { agreementDialog = false }) {
+                    Text(stringResource(R.string.close))
+                }
             }
         )
     }
+    pendingDeleteId?.let { id ->
+        AlertDialog(
+            onDismissRequest = { pendingDeleteId = null },
+            title = { Text(stringResource(R.string.delete_confirm_title)) },
+            text = { Text(stringResource(R.string.delete_confirm_message)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    reader.deleteSavedText(id)
+                    pendingDeleteId = null
+                }) {
+                    Text(stringResource(R.string.delete_text))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteId = null }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun StatusCard(
+    ui: UiState,
+    reader: ReaderViewModel,
+    installVoiceData: () -> Unit,
+    online: Boolean
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(stringResource(R.string.status_title), style = MaterialTheme.typography.titleMedium)
+            Text(ui.status, style = MaterialTheme.typography.bodyLarge)
+            ui.storageError?.let {
+                Text(it, color = MaterialTheme.colorScheme.error)
+            }
+            if (ui.ttsReady && !ui.chineseAvailable) {
+                OutlinedButton(onClick = installVoiceData) {
+                    Text(stringResource(R.string.install_data))
+                }
+            }
+            if (online && ui.ttsReady && ui.languages.isNotEmpty()) {
+                TextButton(onClick = { reader.selectVoice(SYSTEM_DEFAULT) }) {
+                    Text(stringResource(R.string.switch_offline))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NowReadingCard(ui: UiState) {
+    val text = ui.text
+    val safeStart = ui.highlightStart.coerceIn(0, text.length)
+    val safeEnd = ui.highlightEnd.coerceIn(safeStart, text.length)
+    val contextStart = (safeStart - 36).coerceAtLeast(0)
+    val contextEnd = (safeEnd + 36).coerceAtMost(text.length)
+    val highlighted = buildAnnotatedString {
+        if (contextStart > 0) append("…")
+        append(text.substring(contextStart, safeStart))
+        withStyle(
+            SpanStyle(
+                background = MaterialTheme.colorScheme.tertiaryContainer,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                fontWeight = FontWeight.Bold
+            )
+        ) {
+            append(text.substring(safeStart, safeEnd))
+        }
+        append(text.substring(safeEnd, contextEnd))
+        if (contextEnd < text.length) append("…")
+    }
+    val title = ui.savedTexts.firstOrNull { it.id == ui.selectedTextId }?.title
+        ?: stringResource(R.string.unsaved_draft)
+    Card(
+        modifier = Modifier.fillMaxWidth().testTag("now_reading"),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                stringResource(R.string.now_reading),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Text(title, style = MaterialTheme.typography.labelLarge)
+            Text(highlighted, maxLines = 8, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun PlaybackModeSection(ui: UiState, reader: ReaderViewModel) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(stringResource(R.string.playback_mode), style = MaterialTheme.typography.titleLarge)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            PlaybackMode.entries.forEach { mode ->
+                val label = when (mode) {
+                    PlaybackMode.SEQUENTIAL -> stringResource(R.string.mode_sequential)
+                    PlaybackMode.REPEAT_ONE -> stringResource(R.string.mode_repeat_one)
+                    PlaybackMode.SHUFFLE -> stringResource(R.string.mode_shuffle)
+                }
+                FilterChip(
+                    selected = ui.playbackMode == mode,
+                    onClick = { reader.setPlaybackMode(mode) },
+                    label = { Text(label, maxLines = 1) },
+                    modifier = Modifier.weight(1f).testTag("mode_${mode.storedValue}")
+                )
+            }
+        }
+        Text(stringResource(R.string.mode_help), style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+@Composable
+private fun TextLibrarySection(
+    ui: UiState,
+    reader: ReaderViewModel,
+    onDelete: (Long) -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(stringResource(R.string.text_library), style = MaterialTheme.typography.titleLarge)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = reader::saveCurrentText,
+                    enabled = ui.text.isNotBlank(),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(stringResource(R.string.save_text))
+                }
+                OutlinedButton(onClick = reader::newText, modifier = Modifier.weight(1f)) {
+                    Text(stringResource(R.string.new_text))
+                }
+            }
+            Text(stringResource(R.string.draft_autosave), style = MaterialTheme.typography.bodySmall)
+            if (ui.savedTexts.isEmpty()) {
+                Text(stringResource(R.string.no_saved_texts), style = MaterialTheme.typography.bodyMedium)
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    itemsIndexed(ui.savedTexts) { _, document ->
+                        SavedTextRow(
+                            document = document,
+                            selected = ui.selectedTextId == document.id,
+                            playing = ui.busy && ui.selectedTextId == document.id,
+                            onOpen = { reader.loadSavedText(document.id) },
+                            onDelete = { onDelete(document.id) }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SavedTextRow(
+    document: SavedText,
+    selected: Boolean,
+    playing: Boolean,
+    onOpen: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val colors = if (selected) {
+        CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+    } else CardDefaults.cardColors()
+    Card(modifier = Modifier.fillMaxWidth(), colors = colors) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 10.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(
+                modifier = Modifier.weight(1f).clickable(onClick = onOpen),
+                verticalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                if (playing) {
+                    Text(
+                        stringResource(R.string.now_playing_mark),
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                } else if (selected) {
+                    Text(
+                        stringResource(R.string.current_document),
+                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                }
+                Text(document.title, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                Text(
+                    document.text.replace('\n', ' '),
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            TextButton(onClick = onOpen) { Text(stringResource(R.string.load_text)) }
+            TextButton(onClick = onDelete) { Text(stringResource(R.string.delete_text)) }
+        }
+    }
+}
+
+@Composable
+private fun VoicePickerDialog(ui: UiState, onSelect: (String) -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.voice_select)) },
+        text = {
+            LazyColumn(Modifier.heightIn(max = 440.dp)) {
+                itemsIndexed(ui.voices) { _, voice ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelect(voice.id) }
+                            .padding(vertical = 6.dp)
+                            .testTag("voice_${voice.id}"),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(selected = ui.voiceId == voice.id, onClick = null)
+                        Spacer(Modifier.width(8.dp))
+                        Column {
+                            Text(voice.name, style = MaterialTheme.typography.bodyLarge)
+                            VoiceDetail(voice)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) }
+        }
+    )
 }
 
 @Composable
@@ -266,7 +520,8 @@ private fun VoiceDetail(voice: VoiceOption) {
     Text(
         stringResource(
             R.string.voice_details,
-            if (voice.online) stringResource(R.string.online_type) else stringResource(R.string.offline_type),
+            if (voice.online) stringResource(R.string.online_type)
+            else stringResource(R.string.offline_type),
             voice.language,
             voice.source
         ),
@@ -288,16 +543,20 @@ private fun OnlineSettings(ui: UiState, reader: ReaderViewModel) {
     if (ui.voiceId == CUSTOM) {
         Text(stringResource(R.string.custom_server), style = MaterialTheme.typography.titleMedium)
         OutlinedTextField(
-            value = ui.serverUrl, onValueChange = reader::setServer,
+            value = ui.serverUrl,
+            onValueChange = reader::setServer,
             label = { Text(stringResource(R.string.custom_server)) },
             placeholder = { Text(stringResource(R.string.server_hint)) },
-            singleLine = true, modifier = Modifier.fillMaxWidth()
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
         )
         OutlinedTextField(
-            value = ui.speaker, onValueChange = reader::setSpeaker,
+            value = ui.speaker,
+            onValueChange = reader::setSpeaker,
             label = { Text(stringResource(R.string.custom_speaker)) },
             placeholder = { Text(stringResource(R.string.speaker_hint)) },
-            singleLine = true, modifier = Modifier.fillMaxWidth()
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
         )
         Text(stringResource(R.string.custom_contract), style = MaterialTheme.typography.bodySmall)
     }
