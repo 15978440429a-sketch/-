@@ -28,9 +28,9 @@
 3. 等待该次运行完成。成功后，在该次运行详情页的 **Artifacts** 中下载 `text-to-speech-debug`，解压可得到 `app-debug.apk`。文件保留 7 天，过期后重新运行即可。
 4. 安装方式同上。此文件为调试签名 APK，可用于个人测试；发布前应另行配置自己的签名。
 
-工作流安装 JDK 17、API 37 和 Build Tools 36.0.0，执行 `./gradlew --no-daemon assembleDebug`，并由 Gradle Action 验证项目中的官方 wrapper。提交到 `main` 分支时也会自动构建。
+工作流安装 JDK 17、API 37 和 Build Tools 36.0.0，编译主 APK 与 Android 测试 APK，随后在 Android 35 模拟器中运行界面回归测试。测试依次切换神里绫华、优菈、可莉音色，切换三种播放模式，并重建 Activity 验证草稿恢复。提交到 `main` 分支时会自动执行全部步骤。
 
-**构建验证状态：**2026-10-13 已在 GitHub Actions 成功执行 `./gradlew --no-daemon assembleDebug`，构建耗时 2 分 16 秒。已下载并校验调试 APK 的产物 SHA-256、ZIP 完整性和 APK 文件结构。[成功构建记录](https://github.com/15978440429a-sketch/-/actions/runs/38408202871)，对应提交 `c8e70d25b71cc4ae85d077cef7a3396a317f40a3`。APK 大小 12,446,139 字节，SHA-256：`9abe4de2cf7e32f7bca2c31b7f19786a50876f1a8384bf50af783b082a321b8a`。尚未完成真机朗读和公开在线接口播放验证，实际音色可用性取决于设备语音包与第三方服务。
+**构建验证状态：**2026-10-13 已在 GitHub Actions 成功完成编译与 Android 模拟器测试。[成功构建记录](https://github.com/15978440429a-sketch/-/actions/runs/38413685374)，对应提交 `b82086fb60ab7970dd2035df72eaed8bac1b2ada`。已下载并校验产物 ZIP 与 APK 文件结构；APK 大小 12,522,569 字节，SHA-256：`27b511ec1fb505b1c68af190861af460b443c137bedcebe554d36049ca4663bb`。模拟器已覆盖音色切换和文本恢复，但公开在线接口实际合成、手机厂商 TTS 引擎差异及真人听感仍需在真机联网环境中验证。
 
 ## 使用方法
 
