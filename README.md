@@ -99,6 +99,7 @@ gradlew.bat
 gradle/wrapper/gradle-wrapper.jar
 gradle/wrapper/gradle-wrapper.properties
 app/build.gradle.kts
+app/src/androidTest/java/com/example/texttospeech/VoiceAndStorageSmokeTest.kt
 app/src/main/AndroidManifest.xml
 app/src/main/java/com/example/texttospeech/MainActivity.kt
 app/src/main/java/com/example/texttospeech/ReaderViewModel.kt
