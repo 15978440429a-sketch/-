@@ -30,7 +30,7 @@
 
 工作流安装 JDK 17、API 37 和 Build Tools 36.0.0，执行 `./gradlew --no-daemon assembleDebug`，并由 Gradle Action 验证项目中的官方 wrapper。提交到 `main` 分支时也会自动构建。
 
-**构建验证状态：**交付环境缺少 Android SDK，且下载站点在该环境中无法连接/解析，实际执行 `assembleDebug` 未能完成。此压缩包不含 APK。上述 Actions 工作流已提供，但尚未在 GitHub 上运行；不能把配置检查等同于编译或真机验收。首次云端构建结果及手机上的引擎、公开 API 连通性仍需实际验证。
+**构建验证状态：**2026-10-13 已在 GitHub Actions 成功执行 `./gradlew --no-daemon assembleDebug`，构建耗时 2 分 16 秒。已下载并校验调试 APK 的产物 SHA-256、ZIP 完整性和 APK 文件结构。[成功构建记录](https://github.com/15978440429a-sketch/-/actions/runs/38408202871)，对应提交 `c8e70d25b71cc4ae85d077cef7a3396a317f40a3`。APK 大小 12,446,139 字节，SHA-256：`9abe4de2cf7e32f7bca2c31b7f19786a50876f1a8384bf50af783b082a321b8a`。尚未完成真机朗读和公开在线接口播放验证，实际音色可用性取决于设备语音包与第三方服务。
 
 ## 使用方法
 
