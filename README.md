@@ -1,108 +1,167 @@
-# 文字朗读
+# 原神好声音
 
-单模块 Android 应用（Kotlin / Jetpack Compose Material 3 / MVVM / StateFlow）。基础朗读调用设备安装的系统 `TextToSpeech` 引擎；可选神里绫华、优菈和可莉在线音色通过第三方 VITS 接口合成音频。预设角色优先使用公开的 Hugging Face VITS Space，失败后自动尝试两个旧公开服务器，并把第三方服务停机与手机断网区分提示。应用提供文稿播放列表、顺序播放、单曲循环和随机播放，并在朗读时标出当前文稿、突出显示当前句子。无账号、广告、API Key 或收费接口，也不附带角色音频和模型。
+“原神好声音”是一个单模块 Android 文本朗读应用，使用 Kotlin、Jetpack Compose Material 3、MVVM、Coroutines 和 StateFlow 开发。基础方案调用手机系统 `TextToSpeech`，可离线朗读；神里绫华、优菈、可莉等角色音色通过公开 VITS 服务在线合成。应用不需要账号、API Key 或付费接口，没有广告，也不内置角色音频或模型。
 
-## 环境与项目结构
+> 角色语音、公开模型与接口仅供二次创作，禁止商业用途、禁止二次配布。详见本文末尾与 [用户协议](USER_AGREEMENT.md)。
 
-- Android Studio 稳定版（建议 Rabbit 1 或兼容 AGP 9.4 的版本）、JDK 17、Android SDK Platform 37。
-- Gradle 9.6.0、Android Gradle Plugin 9.4.0、Compose BOM 2026.09.00、Kotlin Compose Compiler 插件 2.4.10。
-- `minSdk 26`，`compileSdk 37`，`targetSdk 37`，包名 `com.example.texttospeech`。
-- `app/src/main/java/com/example/texttospeech/`: `MainActivity.kt` 是 Compose 界面；`ReaderViewModel.kt` 负责状态、播放队列和任务取消；`tts/SystemTtsManager.kt` 使用系统 TTS；`network/HuggingFaceVitsClient.kt` 实现 Gradio WebSocket 排队协议并解码 WAV；`network/OnlineSpeechClient.kt` 负责旧公开接口和自建 GET 接口；`playback/AudioFilePlayer.kt` 播放缓存文件；`util/TextSegmenter.kt` 分段并定位当前句子；`storage/` 是独立进程中的 SQLite 文稿存储；`model/VoiceOption.kt` 定义状态。
-- `app/src/main/res/values/strings.xml` 是中文文案；`USER_AGREEMENT.md` 是完整用户协议。
+## 已实现功能
 
-## 打开、构建与安装
+- 多行文本输入、字数统计、清空、长文本自动分段；空文本不能播放。
+- 系统 TTS 离线朗读，优先 `Locale.CHINA`；显示初始化、朗读、停止和错误状态，并可打开系统语音数据安装页。
+- 系统可用语言与音色列表，语速和音调均可在 0.5x–2.0x 调节。
+- 在线音色：神里绫华、优菈（“尤拉”对应优菈）、可莉，以及用户自定义推理服务器。
+- 在线角色主服务使用 Hugging Face VITS Space；失败后再尝试旧公开 VITS 地址，并明确区分“第三方服务不可用”和“手机无网络”。
+- 文稿可命名保存；当前草稿自动保存，退出应用、旋转屏幕或界面进程重建后仍可恢复。
+- 文本由独立 `:text_storage` 进程中的 `ContentProvider + SQLite` 保存，旧版数据库会自动迁移，不会为了升级主动清空文稿。
+- 可创建和删除歌单，把文稿加入或移出歌单；删除歌单不会删除文稿。
+- 顺序播放、随机播放、单曲循环。顺序播放到末尾后从头继续。
+- “每篇播放次数”可设为 1–99；顺序和随机模式会在当前文稿完成指定次数后才切换下一篇。
+- 正在朗读时显示当前文稿、当前第几次，并突出显示当前句子。
+- 倒计时定时播放，范围 1–1440 分钟，可随时取消。
+- 在线角色语音可以下载到应用私有目录，**同时保留合并后的原始 WAV 与 128 kbps MP3**；以后断网可直接播放。
+- MP3 和原始 WAV 都能分别导出到用户选择的手机文件夹；不需要存储权限。
+- 支持深色模式。应用名称为“原神好声音”；图标是原创冰蓝星形与声波设计，不复制米哈游或《原神》官方商标图形。
 
-1. 解压完整项目，在 Android Studio 选择 **Open**，打开包含 `settings.gradle.kts` 的 `TextToSpeechApp` 文件夹。
-2. 在 SDK Manager 安装 Android 17 / API 37，并等待 Gradle 同步。请使用 JDK 17 或 Android Studio 自带的兼容 JDK。
-3. 在项目根目录执行 `./gradlew assembleDebug`（Windows 命令提示符执行 `gradlew.bat assembleDebug`），或点击 **Build > Build App Bundle(s) / APK(s) > Build APK(s)**。
-4. 调试 APK 输出为 `app/build/outputs/apk/debug/app-debug.apk`。连接并授权手机后执行 `adb install -r app/build/outputs/apk/debug/app-debug.apk`，也可将 APK 发送到手机并在系统提示下安装。安卓 8.0 及以上可运行。
+## 开发环境
 
-如果手机已经安装本项目较早交付的调试版，安装 1.3 时可能因云端调试证书不同而提示“签名不一致”或“应用未安装”。请先确认重要文本已点“保存文稿”或另行复制，再卸载旧版，然后安装 1.3。卸载会删除旧版应用私有数据库中的草稿和文稿。GitHub 临时构建机生成的调试签名可能随构建改变，因此不同云端调试包之间也可能需要先卸载；正式发布或持续升级时应配置自己保管的发布签名。
+- Android Studio 当前稳定版，JDK 17。
+- `minSdk 26`，`compileSdk 37`，`targetSdk 37`。
+- Gradle 9.6.0，Android Gradle Plugin 9.4.0，Kotlin 2.4.10。
+- Compose BOM 2026.09.00，OkHttp 5.3.2。
+- Jump3r 1.0.5 用于在手机本地把 16-bit PCM WAV 编码为 MP3。
 
-项目附带 Gradle 9.6.0 官方标准 wrapper JAR 和启动脚本；wrapper JAR 已核对官方 SHA-256。它会按 `gradle-wrapper.properties` 下载 Gradle 9.6.0，并校验发行包 SHA-256。首次构建还需联网下载 SDK/Gradle/Maven 依赖。
+## 用 Android Studio 打开并构建
 
-### 不在本机安装 Android Studio：使用 GitHub Actions
+1. 下载或克隆本仓库，在 Android Studio 选择 **Open**，打开仓库根目录；该目录应直接包含 `settings.gradle.kts`、`app` 和 `.github`。
+2. 在 SDK Manager 安装 Android API 37，等待 Gradle 同步完成。
+3. 选择 **Build > Build App Bundle(s) / APK(s) > Build APK(s)**，或者在项目根目录执行：
 
-项目提供 `.github/workflows/build-apk.yml`，可以在 GitHub 的构建机上生成调试 APK：
+   ```bash
+   ./gradlew assembleDebug
+   ```
 
-1. 将 **`TextToSpeechApp` 文件夹里的全部内容**提交到你自己的 GitHub 仓库根目录；根目录应直接包含 `settings.gradle.kts`、`app` 和 `.github`。解压后请保留以点开头的 `.github` 文件夹。
-2. 打开该仓库的 **Actions**，按页面提示启用工作流，选择 **Build APK**，点击 **Run workflow**。
-3. 等待该次运行完成。成功后，在该次运行详情页的 **Artifacts** 中下载 `text-to-speech-debug`，解压可得到 `app-debug.apk`。文件保留 7 天，过期后重新运行即可。
-4. 安装方式同上。此文件为调试签名 APK，可用于个人测试；发布前应另行配置自己的签名。
+   Windows 命令提示符使用：
 
-工作流安装 JDK 17、API 37 和 Build Tools 36.0.0，编译主 APK 与 Android 测试 APK，随后在 Android 35 模拟器中运行回归测试。测试依次切换神里绫华、优菈、可莉音色，切换三种播放模式，重建 Activity 验证草稿恢复，并通过本地模拟 HTTP 服务验证主服务器失败后会请求备用服务器、校验返回音频。提交到 `main` 分支时会自动执行全部步骤。
+   ```bat
+   gradlew.bat assembleDebug
+   ```
 
-**构建验证状态：**2026-10-14 已在 GitHub Actions 成功完成 1.3 编译与 Android 35 模拟器测试。[成功构建记录](https://github.com/15978440429a-sketch/-/actions/runs/38488810646)，对应源码提交 `5266c25abc71193f04de76bc6abb65ecdca240e9`。APK 大小 12,542,573 字节，SHA-256：`749551c94a6f1253654c5f2eea8a0c0f664c0c5773c789142acca5d18d67d849`。自动测试验证了 Gradio 请求数据、角色名称解析、base64 音频响应解析、旧服务器重试、音色切换、播放模式和独立进程文本恢复。
+4. APK 输出路径：`app/build/outputs/apk/debug/app-debug.apk`。
 
-同日另以与 Android 客户端一致的 WebSocket 字段直接连接公开 Space，神里绫华、优菈和可莉均返回带有效 `RIFF/WAVE` 文件头的音频，大小分别为 188,460、136,236、186,924 字节。实时第三方测试用于确认当前协议和角色值，但不放进每次构建的硬性门禁，以免第三方临时休眠导致正常源码无法构建。
+也可以在仓库的 **Actions > Build APK** 中手动运行工作流。成功后从该次运行的 **Artifacts** 下载 `text-to-speech-debug` 并解压。
+
+## 安装到手机
+
+- 可把 `app-debug.apk` 发送到 Android 8.0 或更高版本手机，允许所用文件管理器“安装未知应用”后打开安装。
+- 也可以连接已授权 USB 调试的手机并执行：
+
+  ```bash
+  adb install -r app/build/outputs/apk/debug/app-debug.apk
+  ```
+
+- GitHub 临时构建机生成的调试证书可能与旧 APK 不同。如果出现“签名不一致”或“应用未安装”，请先把重要文稿复制出来，再卸载旧版并安装新版。卸载或在系统设置中清除存储会删除应用私有的草稿、文稿、歌单和已下载音频。
 
 ## 使用方法
 
-1. 输入文本。当前草稿会在输入后自动保存，退出应用再打开也会恢复。默认选中“系统默认（离线）”，点击“播放”。系统 TTS 会根据设备上**实际安装**的离线语音包朗读并自动分段；“停止”立即中断。朗读期间，状态区下方会显示当前文稿并突出显示正在朗读的句子。
-2. 点“保存文稿”把当前内容加入“文稿播放列表”。点“新建”开始另一篇，点列表里的“打开”可以切换文稿。重新编辑已打开的文稿后，再点“保存文稿”会更新这一篇。删除文稿前应用会再次确认。
-3. 播放模式可选择“顺序播放”“单曲循环”或“随机播放”。顺序播放会从当前文稿继续到下一篇，到列表末尾停止；单曲循环会反复朗读当前内容；随机播放会从已保存文稿中随机选择。按“停止”会取消后续自动播放。
-4. 点击“已选：系统默认（离线）”打开音色管理，查看语言、类型和来源。选择“神里绫华（在线）”、“优菈（在线）”或“可莉（在线）”，输入文本并点击“播放”。应用先连接 Hugging Face VITS Space，界面会显示连接、排队、合成和播放状态；该服务失败时再尝试两个旧服务器。所有在线源均失败时会明确显示“角色语音服务当前不可用”，不会直接断言手机没有网络。选择音色后对**下次**播放生效。
-5. 无可用中文离线语音时，点击“安装语音数据”并在系统设置中下载中文语音包；返回应用后会重新初始化引擎并刷新可用音色。某些设备还需在系统设置里启用或更换 TTS 引擎。系统 TTS 语言可从下拉框选择；语速、音调范围均为 0.5x–2.0x。
-6. 在线音色另有 `noise`、`length` 和 MP3/WAV 设置；`length` 值越大朗读越慢。若有自建服务，选择“自定义音色（在线）”，填写服务器根地址和服务端识别的 `speaker` 名称。GPT-SoVITS 的不同 WebUI 接口通常需要自行编写兼容适配层。
+### 系统离线朗读
 
-## 文本保存与多进程说明
+1. 输入文本，保持“系统默认（离线）”，点击“播放”。
+2. 若提示中文语音不可用，点击“安装语音数据”，在系统设置中安装中文语音包后返回应用。
+3. 可选择系统语言、系统音色，并调整语速、音调。修改项从下次播放开始生效。
+4. 系统 TTS 没有可靠的原生暂停，因此应用只提供真实有效的“播放”和“停止”，没有伪暂停按钮。
 
-- 清单中的 `TextStoreProvider` 声明为 `android:process=":text_storage"`，因此 SQLite 数据库的读取与写入发生在独立的应用进程，界面进程通过 `ContentResolver` 访问它。
-- 编辑框是自动保存的草稿；文稿播放列表是用户点“保存文稿”后建立的独立条目。两者都会保存在应用私有 SQLite 数据库中，关闭界面、结束界面进程或旋转屏幕后仍可恢复。
-- 每次保存带有递增版本号，独立进程会拒绝较旧的并发写入，避免快速输入或退出时旧内容覆盖新内容。`Activity.onStop()` 还会执行一次最终保存。
-- 数据只保存在本机应用私有目录。卸载应用或在系统设置中“清除存储空间”会删除这些内容；应用没有云同步功能。
+### 神里绫华、优菈和可莉
 
-预设角色的主服务：
+1. 点击音色选择器，选择“神里绫华（在线）”“优菈（在线）”或“可莉（在线）”。
+2. 输入文本后直接播放，或者先点“保存文稿”并填写名称。
+3. 在线播放时会显示连接、排队、合成和播放进度。服务休眠、排队或停机时会给出明确错误，可切回系统离线音色。
+4. 音色切换会先安全停止当前播放；系统引擎的重复音色 ID 和厂商异常均有保护，避免过去选择音色时直接闪退的问题。
+
+### 下载 MP3 和原始 WAV
+
+1. 先选择在线角色音色，保存并命名当前文稿；修改文稿后需要再次保存。
+2. 点击“下载 MP3 + 原始 WAV”。应用按段在线合成 WAV，在手机本地合并原始 PCM WAV，并编码一份 MP3。
+3. 完成后该文稿会显示离线音频标记；再次播放相同文本和相同角色时，优先使用本地 MP3，MP3 缺失时回退本地 WAV，不再联网。
+4. “导出 MP3”和“导出原始 WAV”会打开 Android 文件选择器，由用户决定保存位置。旧版只有 MP3 的缓存仍可继续播放和导出，重新下载后会补齐 WAV。
+5. 修改文本或删除文稿会使不再匹配的离线文件失效并删除；“删除离线音频”不会删除文稿。
+
+### 文稿、歌单和播放次数
+
+1. “保存文稿”会要求输入名称。重新保存已打开的文稿会更新它；“新建”会保留旧文稿并建立空白草稿。
+2. 新建歌单后，可在文稿列表中逐篇“加入歌单”或“移出歌单”。选择“全部文稿”可播放所有已保存文稿。
+3. 顺序模式按歌单顺序播放，末尾自动回到第一篇；随机模式随机选下一篇；单曲循环一直重复当前文稿。
+4. 顺序或随机模式下，每篇会先完成设定的 1–99 次，再进入下一篇。点击“停止”会取消当前播放与后续自动切换。
+
+### 定时播放
+
+设定分钟数后点击“开始计时”。应用进程仍存活时，即使界面进入后台，倒计时通常也会继续；如果系统强制结束整个进程，应用无法在后台自行唤醒，重新打开时会恢复目标时间并立即执行已经到期的任务。本版本没有申请精确闹钟权限，也没有常驻前台服务。
+
+## 在线接口
+
+预设角色首先连接：
 
 ```text
 页面：https://huggingface.co/spaces/zomehwh/vits-uma-genshin-honkai
 队列：wss://zomehwh-vits-uma-genshin-honkai.hf.space/queue/join
 ```
 
-主服务使用 Gradio 3.7 WebSocket 队列协议，不需要 API Key。客户端发送文本、语言选项“中文”、角色显示名称、`noise_scale`、固定的 `noise_scale_w=0.668` 和 `length_scale`；Gradio 服务端再把选项转换成模型索引。客户端接收 base64 WAV 后在本机缓存播放。角色显示名称会优先从页面配置动态解析，并保留当前已验证名称作为配置页面暂时不可读取时的降级值。该服务单次最多接受 100 字，应用按最多 96 个 UTF-16 字符自动分段。
+该 Gradio 服务返回 WAV，不需要 API Key。应用动态读取角色选项，并保留以下已知映射作为页面配置暂时不可读时的降级值：
 
-旧公开接口备用地址（参数由客户端进行 URL 编码）：
+| 界面名称 | Hugging Face 选项 | 旧接口 speaker | 类型 |
+| --- | --- | --- | --- |
+| 神里绫华（在线） | 神里绫华（龟龟） | 神里绫华 | 在线、需联网 |
+| 优菈（在线） | 优菈 | 优菈 | 在线、需联网 |
+| 可莉（在线） | 可莉 | 可莉 | 在线、需联网 |
+
+旧公开接口仅作为备用：
 
 ```text
-主：http://245671.proxy.nscc-gz.cn:8888/?text=你好&speaker=神里绫华&format=mp3&noise=0.667&length=1.20
-备：http://233366.proxy.nscc-gz.cn:8888/?text=你好&speaker=神里绫华&format=mp3&noise=0.667&length=1.20
+http://245671.proxy.nscc-gz.cn:8888/?text=你好&speaker=神里绫华&format=wav&noise=0.667&length=1.20
+http://233366.proxy.nscc-gz.cn:8888/?text=你好&speaker=神里绫华&format=wav&noise=0.667&length=1.20
 ```
 
-三个预设音色在主服务和旧备用接口中的映射：
+自定义服务器接受 GET 参数 `text`、`speaker`、`format`、`noise`、`length`，并应以 2xx 返回有效 MP3 或 WAV。下载双格式离线文件时，客户端会请求 WAV，以便保留原始文件；仅支持返回兼容的 16-bit PCM WAV 进行合并和 MP3 编码。
 
-| 界面名称 | Hugging Face 选项值 | 旧接口 speaker 参数 | 类型 |
-| --- | --- | --- | --- |
-| 神里绫华（在线） | 神里绫华（龟龟） | 神里绫华 | 在线音色（需联网） |
-| 优菈（在线） | 优菈 | 优菈 | 在线音色（需联网） |
-| 可莉（在线） | 可莉 | 可莉 | 在线音色（需联网） |
+客户端校验 HTTP 状态、音频头与大小，设置连接、排队、读取和总时限。预设角色按最多 96 个 UTF-16 字符分段，最多 125 段；自定义服务约 180 个字符一段，最多 80 段。单段返回文件上限 20 MiB。
 
-“尤拉”对应角色优菈。2026-10-13 实测 Hugging Face Space 中神里绫华、优菈和可莉均成功生成 WAV；两个旧地址当时仍返回 `502 Bad Gateway / Connection refused`，只作为未来可能恢复的备用源。主服务可能休眠或排队，第三方服务状态不代表手机网络状态。也可以选择“自定义音色（在线）”使用自己部署的兼容服务。
+## 存储、权限和隐私
 
-自建接口仍接收 `text`、`speaker`、`format`（`mp3` 或 `wav`）、`noise`、`length`，以 2xx 状态返回真正的 MP3/WAV 文件。客户端检查 HTTP 状态、音频文件头和大小（每段上限 20 MiB）。在线请求有连接/排队/读取/总时限；失败、超时、非音频响应会显示错误。预设角色每段最多 96 个 UTF-16 字符、最多 125 段；自建接口每段约 180 个字符、最多 80 段。系统朗读分段不受此在线上限影响。
+- 清单只声明 `INTERNET`。系统 TTS、SQLite、应用私有音频和 Android 文件选择器不需要额外存储权限。
+- 草稿、文稿、歌单和音频元数据由单独的 `:text_storage` 进程管理，界面进程通过 `ContentResolver` 读写。保存带递增版本号，可拒绝较旧的并发草稿写入。
+- 文本没有云同步。只有用户选择在线音色并播放或下载时，相应文本才会发往第三方或自定义服务器，请勿提交密码、个人敏感信息或保密内容。
+- Hugging Face 主服务使用 HTTPS/WSS；旧备用服务及用户自建局域网服务可能使用 HTTP，因此清单允许明文网络流量。
 
-## 权限、隐私与已知限制
+## 已知限制
 
-- 只声明 `INTERNET` 权限。文本保存使用应用私有数据库，不需要存储权限。系统 TTS 不需要网络权限；在线音色必须联网。输入的在线文本会发送给所选第三方或自建服务器。
-- Hugging Face 主服务使用 **HTTPS/WSS**；两个旧备用接口仅提供 **HTTP**。为了兼容旧接口和用户的局域网 HTTP 服务，应用仍允许明文 HTTP。请勿将敏感文本提交在线合成，自建服务建议部署 HTTPS。应用不永久保存生成音频，缓存文件播放后删除。
-- 公共服务由第三方维护，无法保证持续可用、响应质量、队列时长或角色索引永远不变。应用先尝试 Hugging Face Space，再依次尝试 `245671` 与 `233366` 两个旧地址；全部失败时提示角色服务不可用。在线失败时可在状态区点“切换到系统离线音色”；设备须先安装相应语音数据。
-- 未集成 Sherpa-ONNX：单个 `.onnx` 文件通常不足以运行端侧 TTS，还需要兼容的模型结构、配置、词表/分词与前后处理，以及设备性能和授权验证。目前没有已确认可直接用于 Sherpa-ONNX 的神里绫华模型，因此不提供虚假的模型导入或离线角色音色。
-- 系统 `TextToSpeech` 不支持可靠的原生暂停，本项目仅提供播放和停止。关闭或旋转 Activity 时会停止播放并 `shutdown()`。编辑文本和播放模式由独立存储进程保存，不依赖 Android 状态 Bundle，因此长文本也不会因 Bundle 大小限制而被截断。
-- 播放模式在一篇文稿正常朗读完成后生效；发生网络/TTS 错误或用户点“停止”时不会自动跳到下一篇。顺序播放到最后一篇后停止，并非列表循环。
-- 切换音色闪退修复包含两层保护：系统引擎返回的重名音色会去重，界面列表不再使用可能重复的音色 ID 作为 Compose 唯一键；厂商 TTS 引擎的停止、切换和释放异常也会被转换为界面错误提示。
+- 公共服务由第三方维护，可能休眠、排队、限流、改变协议或永久停止，应用无法保证角色音色始终可用；系统 TTS 仍是无网络时的基础方案。
+- 下载依赖在线服务成功返回兼容 WAV。超长文稿会消耗较多时间、网络、存储和电量。
+- 定时播放不是系统级精确闹钟；应用进程被系统彻底结束后，无法在指定时刻主动唤醒。
+- 未集成 Sherpa-ONNX。单个 `.onnx` 文件通常不足以运行 TTS，还需要匹配的配置、词表、分词和前后处理；目前没有已确认可直接用于 Sherpa-ONNX 的神里绫华模型，因此不虚构模型导入功能。
+- App 图标是原创“冰蓝星形 + 声波”风格，不是《原神》官方图标，也不表示与米哈游存在官方关系。
+
+## 自动构建与测试
+
+GitHub Actions 会使用 JDK 17、API 37 和 Android 35 x86_64 模拟器执行：
+
+- `assembleDebug` 与 `assembleDebugAndroidTest`；
+- 神里绫华、优菈、可莉音色连续切换；
+- 三种播放模式切换；
+- Activity 重建后的草稿恢复；
+- 本地模拟 HTTP 主服务失败后的备用服务器重试；
+- 两段 16-bit PCM WAV 的真实合并、原始 WAV 文件头检查、Jump3r MP3 编码和 MP3 文件头检查。
+
+**2.1 构建状态：已通过。** 2026-10-14 的 [GitHub Actions 构建与 Android 35 模拟器测试](https://github.com/15978440429a-sketch/-/actions/runs/38514913310) 全部成功，对应功能提交 `e7d5b9bea43251c8b045541c390f32a3cb89b108`。生成的 APK 为 12,897,994 字节，SHA-256：`31c0136e40d7457ac5a923acd199e8156256cd327ce548f16e0c3701411fbafc`。
 
 ## 版权与使用条件
 
-神里绫华、优菈、可莉等角色的音频版权属于米哈游科技（上海）有限公司。公开 API 与相关模型仅允许用于二次创作，**禁止商业用途、禁止二次配布**；请遵守接口提供者的要求。用户对使用他人音色产生的版权问题自行负责。本应用本身不内置任何未经授权的角色音频文件或模型，也并非米哈游或接口提供者的官方产品。详见 [用户协议](USER_AGREEMENT.md)。
+神里绫华、优菈、可莉等角色的音频版权属于米哈游科技（上海）有限公司。公开 API、相关模型与生成音频仅允许用于二次创作，**禁止商业用途、禁止二次配布**。导出 MP3/WAV 不代表取得传播授权。用户对保存、使用或分享他人音色产生的版权问题自行负责，并应遵守权利人及接口提供者的要求。
 
-公开 API 的协议、角色列表、参数和非商业说明见项目维护者的 [GenshinVoice README](https://github.com/TimeRainStarSky/GenshinVoice)。Android 配置可参照 [Android Gradle Plugin 发布说明](https://developer.android.com/build/releases/agp-9-4-0-release-notes) 与 [Compose BOM 文档](https://developer.android.com/develop/ui/compose/bom)。
+本应用不内置任何未经授权的角色音频文件或模型，不代表米哈游、Hugging Face、模型作者或接口提供者。公开 API 的项目说明可参考 [GenshinVoice](https://github.com/TimeRainStarSky/GenshinVoice)。
 
-## 完整文件清单
-
-所有路径均相对于 `TextToSpeechApp`：
+## 主要文件
 
 ```text
 .github/workflows/build-apk.yml
-.gitignore
 README.md
 USER_AGREEMENT.md
 settings.gradle.kts
@@ -113,8 +172,6 @@ gradlew.bat
 gradle/wrapper/gradle-wrapper.jar
 gradle/wrapper/gradle-wrapper.properties
 app/build.gradle.kts
-app/src/androidTest/java/com/example/texttospeech/OnlineSpeechClientInstrumentedTest.kt
-app/src/androidTest/java/com/example/texttospeech/VoiceAndStorageSmokeTest.kt
 app/src/main/AndroidManifest.xml
 app/src/main/java/com/example/texttospeech/MainActivity.kt
 app/src/main/java/com/example/texttospeech/ReaderViewModel.kt
@@ -122,12 +179,16 @@ app/src/main/java/com/example/texttospeech/model/VoiceOption.kt
 app/src/main/java/com/example/texttospeech/network/HuggingFaceVitsClient.kt
 app/src/main/java/com/example/texttospeech/network/OnlineSpeechClient.kt
 app/src/main/java/com/example/texttospeech/playback/AudioFilePlayer.kt
+app/src/main/java/com/example/texttospeech/playback/OfflineAudioExporter.kt
 app/src/main/java/com/example/texttospeech/storage/TextRepository.kt
 app/src/main/java/com/example/texttospeech/storage/TextStoreContract.kt
 app/src/main/java/com/example/texttospeech/storage/TextStoreProvider.kt
 app/src/main/java/com/example/texttospeech/tts/SystemTtsManager.kt
 app/src/main/java/com/example/texttospeech/util/TextSegmenter.kt
+app/src/main/res/drawable/ic_launcher_foreground.xml
+app/src/main/res/mipmap-anydpi/ic_launcher.xml
+app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
 app/src/main/res/values/strings.xml
-app/src/main/res/values/styles.xml
-app/src/main/res/values-night/styles.xml
+app/src/androidTest/java/com/example/texttospeech/OnlineSpeechClientInstrumentedTest.kt
+app/src/androidTest/java/com/example/texttospeech/VoiceAndStorageSmokeTest.kt
 ```
