@@ -82,10 +82,15 @@ class MainActivity : ComponentActivity() {
     ) {
         reader.attachActivity()
     }
-    private val exportAudioLauncher = registerForActivityResult(
+    private val exportMp3Launcher = registerForActivityResult(
         ActivityResultContracts.CreateDocument("audio/mpeg")
     ) { destination ->
-        destination?.let(reader::exportDownloadedAudio)
+        destination?.let { reader.exportDownloadedAudio(it, "mp3") }
+    }
+    private val exportWavLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("audio/wav")
+    ) { destination ->
+        destination?.let { reader.exportDownloadedAudio(it, "wav") }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -104,7 +109,8 @@ class MainActivity : ComponentActivity() {
                     ReaderScreen(
                         reader = reader,
                         installVoiceData = ::openVoiceDataSettings,
-                        exportAudio = ::exportDownloadedAudio
+                        exportMp3 = { exportDownloadedAudio("mp3") },
+                        exportWav = { exportDownloadedAudio("wav") }
                     )
                 }
             }
@@ -112,13 +118,19 @@ class MainActivity : ComponentActivity() {
         reader.attachActivity()
     }
 
-    private fun exportDownloadedAudio() {
-        val fileName = reader.downloadedAudioFileName()
+    private fun exportDownloadedAudio(format: String) {
+        val label = if (format == "wav") "WAV" else "MP3"
+        val fileName = reader.downloadedAudioFileName(format)
         if (fileName == null) {
-            Toast.makeText(this, R.string.error_download_missing, Toast.LENGTH_LONG).show()
+            Toast.makeText(
+                this,
+                getString(R.string.error_download_missing, label),
+                Toast.LENGTH_LONG
+            ).show()
             return
         }
-        exportAudioLauncher.launch(fileName)
+        if (format == "wav") exportWavLauncher.launch(fileName)
+        else exportMp3Launcher.launch(fileName)
     }
 
     private fun openVoiceDataSettings() {
@@ -150,7 +162,8 @@ class MainActivity : ComponentActivity() {
 private fun ReaderScreen(
     reader: ReaderViewModel,
     installVoiceData: () -> Unit,
-    exportAudio: () -> Unit
+    exportMp3: () -> Unit,
+    exportWav: () -> Unit
 ) {
     val ui by reader.uiState.collectAsStateWithLifecycle()
     var voiceDialog by remember { mutableStateOf(false) }
@@ -262,7 +275,8 @@ private fun ReaderScreen(
                 ui = ui,
                 currentDocument = currentDocument,
                 reader = reader,
-                exportAudio = exportAudio
+                exportMp3 = exportMp3,
+                exportWav = exportWav
             )
         }
 
@@ -763,9 +777,9 @@ private fun SavedTextRow(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
-                if (document.offlineAudioPath != null) {
+                if (document.offlineAudioPath != null || document.offlineWavPath != null) {
                     Text(
-                        stringResource(R.string.offline_mp3_mark),
+                        stringResource(R.string.offline_audio_mark),
                         color = MaterialTheme.colorScheme.tertiary,
                         style = MaterialTheme.typography.labelSmall
                     )
@@ -793,7 +807,8 @@ private fun OfflineDownloadSection(
     ui: UiState,
     currentDocument: SavedText?,
     reader: ReaderViewModel,
-    exportAudio: () -> Unit
+    exportMp3: () -> Unit,
+    exportWav: () -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -801,12 +816,19 @@ private fun OfflineDownloadSection(
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(stringResource(R.string.offline_download_title), style = MaterialTheme.typography.titleMedium)
-            val downloaded = currentDocument?.offlineAudioPath != null
+            val hasMp3 = currentDocument?.offlineAudioPath != null
+            val hasWav = currentDocument?.offlineWavPath != null
+            val downloaded = hasMp3 || hasWav
             if (downloaded) {
                 val voiceName = ui.voices.firstOrNull {
                     it.id == currentDocument?.offlineVoiceId
                 }?.name ?: stringResource(R.string.online_voice)
-                Text(stringResource(R.string.downloaded_voice, voiceName))
+                val formats = when {
+                    hasMp3 && hasWav -> stringResource(R.string.downloaded_formats_both)
+                    hasWav -> stringResource(R.string.downloaded_formats_wav)
+                    else -> stringResource(R.string.downloaded_formats_mp3)
+                }
+                Text(stringResource(R.string.downloaded_voice, voiceName, formats))
             } else {
                 Text(stringResource(R.string.no_downloaded_audio))
             }
@@ -819,21 +841,32 @@ private fun OfflineDownloadSection(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    if (downloaded) stringResource(R.string.redownload_mp3)
-                    else stringResource(R.string.download_mp3)
+                    if (downloaded) stringResource(R.string.redownload_audio)
+                    else stringResource(R.string.download_audio)
                 )
             }
             if (downloaded) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = exportAudio, modifier = Modifier.weight(1f)) {
+                    OutlinedButton(
+                        onClick = exportMp3,
+                        enabled = hasMp3,
+                        modifier = Modifier.weight(1f)
+                    ) {
                         Text(stringResource(R.string.export_mp3))
                     }
                     OutlinedButton(
-                        onClick = reader::removeDownloadedAudio,
+                        onClick = exportWav,
+                        enabled = hasWav,
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text(stringResource(R.string.remove_download))
+                        Text(stringResource(R.string.export_wav))
                     }
+                }
+                OutlinedButton(
+                    onClick = reader::removeDownloadedAudio,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(stringResource(R.string.remove_download))
                 }
             }
             Text(stringResource(R.string.download_help), style = MaterialTheme.typography.bodySmall)

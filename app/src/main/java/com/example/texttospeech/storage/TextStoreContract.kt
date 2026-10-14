@@ -25,6 +25,7 @@ object TextStoreContract {
     const val PLAYS_PER_ITEM = "plays_per_item"
     const val REVISION = "revision"
     const val OFFLINE_AUDIO_PATH = "offline_audio_path"
+    const val OFFLINE_WAV_PATH = "offline_wav_path"
     const val OFFLINE_VOICE_ID = "offline_voice_id"
     const val OFFLINE_TEXT_HASH = "offline_text_hash"
     const val NAME = "name"

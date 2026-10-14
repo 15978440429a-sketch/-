@@ -273,7 +273,7 @@ class ReaderViewModel(
                     capturedText,
                     keepOfflineAudio = keepAudio
                 )
-                if (!keepAudio) previous?.offlineAudioPath?.let { File(it).delete() }
+                if (!keepAudio) previous?.let(::deleteOfflineFiles)
                 val selectedPlaylist = _uiState.value.playlists
                     .firstOrNull { it.id == _uiState.value.selectedPlaylistId }
                 if (capturedId == null && selectedPlaylist != null) {
@@ -307,7 +307,7 @@ class ReaderViewModel(
         viewModelScope.launch {
             try {
                 textRepository.deleteDocument(id)
-                document?.offlineAudioPath?.let { File(it).delete() }
+                document?.let(::deleteOfflineFiles)
                 refreshLibrary()
                 val selectedId = _uiState.value.selectedTextId.takeIf { it != id }
                 saved["selected_text_id"] = selectedId
@@ -585,14 +585,17 @@ class ReaderViewModel(
         val document = state.savedTexts.firstOrNull { it.id == state.selectedTextId } ?: return null
         if (document.offlineVoiceId != state.voiceId) return null
         if (document.offlineTextHash != textHash(state.text)) return null
-        return document.offlineAudioPath?.let(::File)?.takeIf(File::isFile)
+        return sequenceOf(document.offlineAudioPath, document.offlineWavPath)
+            .filterNotNull()
+            .map(::File)
+            .firstOrNull(File::isFile)
     }
 
     private fun playDownloadedAudio(state: UiState, file: File, token: Long) {
         activeSegments = listOf(TextSegmenter.Segment(state.text, 0, state.text.length))
         _uiState.value = _uiState.value.copy(
             busy = true,
-            status = app.getString(R.string.status_offline_mp3_playing),
+            status = app.getString(R.string.status_offline_audio_playing),
             highlightStart = 0,
             highlightEnd = state.text.length
         )
@@ -928,18 +931,25 @@ class ReaderViewModel(
                     status = app.getString(R.string.status_encoding_mp3)
                 )
                 val directory = File(app.filesDir, "offline_audio")
-                val destination = File(directory, "${document.id}-${state.voiceId}.mp3")
-                val previousPath = document.offlineAudioPath
-                audioExporter.createMp3(parts, destination)
+                val mp3Destination = File(directory, "${document.id}-${state.voiceId}.mp3")
+                val wavDestination = File(directory, "${document.id}-${state.voiceId}.wav")
+                val previousPaths = listOfNotNull(
+                    document.offlineAudioPath,
+                    document.offlineWavPath
+                )
+                audioExporter.createMp3AndWav(parts, mp3Destination, wavDestination)
                 textRepository.attachOfflineAudio(
                     document.id,
-                    destination.absolutePath,
+                    mp3Destination.absolutePath,
+                    wavDestination.absolutePath,
                     state.voiceId,
                     textHash(state.text)
                 )
-                if (previousPath != null && previousPath != destination.absolutePath) {
-                    File(previousPath).delete()
-                }
+                val currentPaths = setOf(
+                    mp3Destination.absolutePath,
+                    wavDestination.absolutePath
+                )
+                previousPaths.filterNot(currentPaths::contains).forEach { File(it).delete() }
                 refreshLibrary()
                 _uiState.value = _uiState.value.copy(
                     downloadBusy = false,
@@ -968,12 +978,13 @@ class ReaderViewModel(
 
     fun removeDownloadedAudio() {
         val document = currentDocument() ?: return
-        val path = document.offlineAudioPath ?: return
+        val paths = listOfNotNull(document.offlineAudioPath, document.offlineWavPath)
+        if (paths.isEmpty()) return
         if (_uiState.value.busy) stop(showStatus = false)
         viewModelScope.launch {
             try {
                 textRepository.clearOfflineAudio(document.id)
-                withContext(Dispatchers.IO) { File(path).delete() }
+                withContext(Dispatchers.IO) { paths.distinct().forEach { File(it).delete() } }
                 refreshLibrary()
                 _uiState.value = _uiState.value.copy(
                     status = app.getString(R.string.status_download_removed)
@@ -984,17 +995,28 @@ class ReaderViewModel(
         }
     }
 
-    fun downloadedAudioFileName(): String? {
+    fun downloadedAudioFileName(format: String): String? {
         val document = currentDocument() ?: return null
-        val path = document.offlineAudioPath ?: return null
+        val normalized = format.lowercase(Locale.US)
+        val path = (if (normalized == "wav") {
+            document.offlineWavPath
+        } else {
+            document.offlineAudioPath
+        }) ?: return null
+        val extension = if (normalized == "wav") "wav" else "mp3"
         if (!File(path).isFile) return null
-        return sanitizeFileName("${document.title}-${voiceDisplayName(document.offlineVoiceId)}.mp3")
+        return sanitizeFileName(
+            "${document.title}-${voiceDisplayName(document.offlineVoiceId)}.$extension"
+        )
     }
 
-    fun exportDownloadedAudio(destination: Uri) {
+    fun exportDownloadedAudio(destination: Uri, format: String) {
         val document = currentDocument() ?: return
-        val source = document.offlineAudioPath?.let(::File)?.takeIf(File::isFile) ?: run {
-            showError(app.getString(R.string.error_download_missing))
+        val normalized = format.lowercase(Locale.US)
+        val path = if (normalized == "wav") document.offlineWavPath else document.offlineAudioPath
+        val label = if (normalized == "wav") "WAV" else "MP3"
+        val source = path?.let(::File)?.takeIf(File::isFile) ?: run {
+            showError(app.getString(R.string.error_download_missing, label))
             return
         }
         viewModelScope.launch {
@@ -1005,12 +1027,18 @@ class ReaderViewModel(
                     } ?: throw java.io.IOException("Cannot open destination")
                 }
                 _uiState.value = _uiState.value.copy(
-                    status = app.getString(R.string.status_export_complete)
+                    status = app.getString(R.string.status_export_complete, label)
                 )
             } catch (_: Exception) {
-                showError(app.getString(R.string.error_export))
+                showError(app.getString(R.string.error_export, label))
             }
         }
+    }
+
+    private fun deleteOfflineFiles(document: SavedText) {
+        listOfNotNull(document.offlineAudioPath, document.offlineWavPath)
+            .distinct()
+            .forEach { File(it).delete() }
     }
 
     private fun currentDocument(): SavedText? {

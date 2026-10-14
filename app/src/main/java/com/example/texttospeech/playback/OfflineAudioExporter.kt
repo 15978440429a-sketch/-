@@ -11,12 +11,18 @@ import java.io.IOException
 import java.io.RandomAccessFile
 import kotlin.coroutines.coroutineContext
 
-/** Combines PCM WAV parts and encodes a real MP3 in the app's private storage. */
+/** Combines PCM WAV parts and keeps both the original WAV and an encoded MP3. */
 class OfflineAudioExporter {
     class UnsupportedWave(message: String) : IOException(message)
     class EncodingFailed : IOException("MP3 encoding failed")
 
-    suspend fun createMp3(wavParts: List<File>, destination: File): File =
+    data class Result(val mp3: File, val wav: File)
+
+    suspend fun createMp3AndWav(
+        wavParts: List<File>,
+        mp3Destination: File,
+        wavDestination: File
+    ): Result =
         withContext(Dispatchers.IO) {
             require(wavParts.isNotEmpty()) { "At least one WAV part is required" }
             val infos = wavParts.map(::inspectWave)
@@ -34,10 +40,10 @@ class OfflineAudioExporter {
                 throw UnsupportedWave("Only 16-bit PCM WAV audio can be saved as MP3")
             }
 
-            val outputDirectory = checkNotNull(destination.parentFile)
-            outputDirectory.mkdirs()
-            val combinedWave = File.createTempFile("combined-", ".wav", outputDirectory)
-            val temporaryMp3 = File.createTempFile("encoded-", ".mp3", outputDirectory)
+            val wavDirectory = checkNotNull(wavDestination.parentFile).apply { mkdirs() }
+            val mp3Directory = checkNotNull(mp3Destination.parentFile).apply { mkdirs() }
+            val combinedWave = File.createTempFile("combined-", ".wav", wavDirectory)
+            val temporaryMp3 = File.createTempFile("encoded-", ".mp3", mp3Directory)
             try {
                 writeCombinedWave(wavParts, infos, combinedWave)
                 coroutineContext.ensureActive()
@@ -52,17 +58,22 @@ class OfflineAudioExporter {
                 )
                 coroutineContext.ensureActive()
                 if (result != 0 || !isMp3(temporaryMp3)) throw EncodingFailed()
-                if (destination.exists() && !destination.delete()) throw EncodingFailed()
-                if (!temporaryMp3.renameTo(destination)) {
-                    temporaryMp3.copyTo(destination, overwrite = true)
-                    temporaryMp3.delete()
-                }
-                destination
+                replaceFile(combinedWave, wavDestination)
+                replaceFile(temporaryMp3, mp3Destination)
+                Result(mp3Destination, wavDestination)
             } finally {
                 combinedWave.delete()
-                if (temporaryMp3 != destination) temporaryMp3.delete()
+                temporaryMp3.delete()
             }
         }
+
+    private fun replaceFile(source: File, destination: File) {
+        if (destination.exists() && !destination.delete()) throw EncodingFailed()
+        if (!source.renameTo(destination)) {
+            source.copyTo(destination, overwrite = true)
+            if (!source.delete()) source.deleteOnExit()
+        }
+    }
 
     private suspend fun writeCombinedWave(
         files: List<File>,

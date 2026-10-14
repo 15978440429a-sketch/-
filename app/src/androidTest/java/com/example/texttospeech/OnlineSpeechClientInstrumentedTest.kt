@@ -4,6 +4,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.example.texttospeech.network.HuggingFaceVitsClient
 import com.example.texttospeech.network.OnlineSpeechClient
+import com.example.texttospeech.playback.OfflineAudioExporter
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -11,13 +12,18 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.Closeable
+import java.io.File
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.nio.charset.StandardCharsets
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.PI
+import kotlin.math.sin
 
 @RunWith(AndroidJUnit4::class)
 class OnlineSpeechClientInstrumentedTest {
@@ -120,6 +126,69 @@ class OnlineSpeechClientInstrumentedTest {
                 }
             }
         }
+    }
+
+    @Test
+    fun keepsOriginalWavAndEncodesPlayableMp3() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val directory = File(context.cacheDir, "audio-export-test").apply { mkdirs() }
+        val first = File(directory, "first.wav")
+        val second = File(directory, "second.wav")
+        val wav = File(directory, "combined.wav")
+        val mp3 = File(directory, "combined.mp3")
+        try {
+            first.writeBytes(pcmWave(frequency = 440.0))
+            second.writeBytes(pcmWave(frequency = 660.0))
+
+            val result = OfflineAudioExporter().createMp3AndWav(
+                wavParts = listOf(first, second),
+                mp3Destination = mp3,
+                wavDestination = wav
+            )
+
+            assertEquals(mp3.absolutePath, result.mp3.absolutePath)
+            assertEquals(wav.absolutePath, result.wav.absolutePath)
+            assertTrue(wav.length() > 44)
+            assertEquals("RIFF", wav.inputStream().use { input ->
+                ByteArray(4).also { input.read(it) }.toString(StandardCharsets.US_ASCII)
+            })
+            assertTrue(mp3.length() > 128)
+            val mp3Header = mp3.inputStream().use { input ->
+                ByteArray(3).also { input.read(it) }
+            }
+            val hasId3 = mp3Header.toString(StandardCharsets.US_ASCII) == "ID3"
+            val hasFrameSync = (mp3Header[0].toInt() and 0xff) == 0xff &&
+                (mp3Header[1].toInt() and 0xe0) == 0xe0
+            assertTrue(hasId3 || hasFrameSync)
+        } finally {
+            listOf(first, second, wav, mp3).forEach(File::delete)
+            directory.delete()
+        }
+    }
+
+    private fun pcmWave(frequency: Double): ByteArray {
+        val sampleRate = 22_050
+        val sampleCount = sampleRate
+        val dataSize = sampleCount * 2
+        return ByteBuffer.allocate(44 + dataSize).order(ByteOrder.LITTLE_ENDIAN).apply {
+            put("RIFF".toByteArray(StandardCharsets.US_ASCII))
+            putInt(36 + dataSize)
+            put("WAVE".toByteArray(StandardCharsets.US_ASCII))
+            put("fmt ".toByteArray(StandardCharsets.US_ASCII))
+            putInt(16)
+            putShort(1.toShort())
+            putShort(1.toShort())
+            putInt(sampleRate)
+            putInt(sampleRate * 2)
+            putShort(2.toShort())
+            putShort(16.toShort())
+            put("data".toByteArray(StandardCharsets.US_ASCII))
+            putInt(dataSize)
+            repeat(sampleCount) { index ->
+                val sample = (sin(2.0 * PI * frequency * index / sampleRate) * 10_000).toInt()
+                putShort(sample.toShort())
+            }
+        }.array()
     }
 
     private fun validWav(): ByteArray = ByteArray(128).also { bytes ->

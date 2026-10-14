@@ -242,6 +242,12 @@ class TextStoreProvider : ContentProvider() {
                 )
                 createPlaylists(db)
             }
+            if (oldVersion < 3) {
+                db.execSQL(
+                    "ALTER TABLE ${TextStoreContract.DOCUMENTS_TABLE} ADD COLUMN " +
+                        "${TextStoreContract.OFFLINE_WAV_PATH} TEXT"
+                )
+            }
         }
 
         private fun createDraft(db: SQLiteDatabase) {
@@ -269,6 +275,7 @@ class TextStoreProvider : ContentProvider() {
                     ${TextStoreContract.TEXT} TEXT NOT NULL,
                     ${TextStoreContract.UPDATED_AT} INTEGER NOT NULL,
                     ${TextStoreContract.OFFLINE_AUDIO_PATH} TEXT,
+                    ${TextStoreContract.OFFLINE_WAV_PATH} TEXT,
                     ${TextStoreContract.OFFLINE_VOICE_ID} TEXT,
                     ${TextStoreContract.OFFLINE_TEXT_HASH} TEXT
                 )
@@ -303,7 +310,7 @@ class TextStoreProvider : ContentProvider() {
     }
 
     companion object {
-        private const val DATABASE_VERSION = 2
+        private const val DATABASE_VERSION = 3
         private const val DRAFT = 1
         private const val DOCUMENTS = 2
         private const val DOCUMENT = 3
@@ -326,6 +333,7 @@ class TextStoreProvider : ContentProvider() {
             TextStoreContract.TEXT,
             TextStoreContract.UPDATED_AT,
             TextStoreContract.OFFLINE_AUDIO_PATH,
+            TextStoreContract.OFFLINE_WAV_PATH,
             TextStoreContract.OFFLINE_VOICE_ID,
             TextStoreContract.OFFLINE_TEXT_HASH
         )

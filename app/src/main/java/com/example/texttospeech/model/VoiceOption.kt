@@ -18,6 +18,7 @@ data class SavedText(
     val text: String,
     val updatedAt: Long,
     val offlineAudioPath: String? = null,
+    val offlineWavPath: String? = null,
     val offlineVoiceId: String? = null,
     val offlineTextHash: String? = null
 )

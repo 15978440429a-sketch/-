@@ -56,6 +56,7 @@ class TextRepository(context: Context) {
                 val textIndex = cursor.getColumnIndexOrThrow(TextStoreContract.TEXT)
                 val updatedIndex = cursor.getColumnIndexOrThrow(TextStoreContract.UPDATED_AT)
                 val audioIndex = cursor.getColumnIndexOrThrow(TextStoreContract.OFFLINE_AUDIO_PATH)
+                val wavIndex = cursor.getColumnIndexOrThrow(TextStoreContract.OFFLINE_WAV_PATH)
                 val voiceIndex = cursor.getColumnIndexOrThrow(TextStoreContract.OFFLINE_VOICE_ID)
                 val hashIndex = cursor.getColumnIndexOrThrow(TextStoreContract.OFFLINE_TEXT_HASH)
                 while (cursor.moveToNext()) {
@@ -66,6 +67,7 @@ class TextRepository(context: Context) {
                             text = cursor.getString(textIndex),
                             updatedAt = cursor.getLong(updatedIndex),
                             offlineAudioPath = cursor.stringOrNull(audioIndex),
+                            offlineWavPath = cursor.stringOrNull(wavIndex),
                             offlineVoiceId = cursor.stringOrNull(voiceIndex),
                             offlineTextHash = cursor.stringOrNull(hashIndex)
                         )
@@ -155,6 +157,7 @@ class TextRepository(context: Context) {
             put(TextStoreContract.UPDATED_AT, System.currentTimeMillis())
             if (!keepOfflineAudio) {
                 putNull(TextStoreContract.OFFLINE_AUDIO_PATH)
+                putNull(TextStoreContract.OFFLINE_WAV_PATH)
                 putNull(TextStoreContract.OFFLINE_VOICE_ID)
                 putNull(TextStoreContract.OFFLINE_TEXT_HASH)
             }
@@ -171,12 +174,14 @@ class TextRepository(context: Context) {
 
     suspend fun attachOfflineAudio(
         documentId: Long,
-        path: String,
+        mp3Path: String,
+        wavPath: String,
         voiceId: String,
         textHash: String
     ) = withContext(Dispatchers.IO) {
         val values = ContentValues().apply {
-            put(TextStoreContract.OFFLINE_AUDIO_PATH, path)
+            put(TextStoreContract.OFFLINE_AUDIO_PATH, mp3Path)
+            put(TextStoreContract.OFFLINE_WAV_PATH, wavPath)
             put(TextStoreContract.OFFLINE_VOICE_ID, voiceId)
             put(TextStoreContract.OFFLINE_TEXT_HASH, textHash)
             put(TextStoreContract.UPDATED_AT, System.currentTimeMillis())
@@ -188,6 +193,7 @@ class TextRepository(context: Context) {
     suspend fun clearOfflineAudio(documentId: Long) = withContext(Dispatchers.IO) {
         val values = ContentValues().apply {
             putNull(TextStoreContract.OFFLINE_AUDIO_PATH)
+            putNull(TextStoreContract.OFFLINE_WAV_PATH)
             putNull(TextStoreContract.OFFLINE_VOICE_ID)
             putNull(TextStoreContract.OFFLINE_TEXT_HASH)
         }
