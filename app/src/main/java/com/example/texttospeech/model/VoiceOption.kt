@@ -77,7 +77,4 @@ data class UiState(
 )
 
 const val SYSTEM_DEFAULT = "system.default"
-const val AYAKA = "online.ayaka"
-const val EULA = "online.eula"
-const val KLEE = "online.klee"
 const val CUSTOM = "online.custom"

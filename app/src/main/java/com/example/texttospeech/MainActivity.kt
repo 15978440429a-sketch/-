@@ -457,12 +457,12 @@ private fun SegmentedReadingSurface(
     modifier: Modifier,
     onOpenEditor: () -> Unit
 ) {
-    val segments = remember(ui.text) {
-        if (ui.text.isBlank()) emptyList() else TextSegmenter.splitWithRanges(ui.text, 140)
+    val segments = remember(ui.text, ui.highlightStart, ui.highlightEnd) {
+        readingDisplaySegments(ui.text, ui.highlightStart, ui.highlightEnd)
     }
     val activeIndex = remember(segments, ui.highlightStart, ui.highlightEnd) {
         if (ui.highlightStart < 0) -1 else segments.indexOfFirst {
-            ui.highlightStart < it.endExclusive && ui.highlightEnd > it.start
+            it.start == ui.highlightStart && it.endExclusive == ui.highlightEnd
         }
     }
     val listState = rememberLazyListState()
@@ -558,6 +558,40 @@ private fun SegmentedReadingSurface(
                 }
             }
         }
+    }
+}
+
+private fun readingDisplaySegments(
+    text: String,
+    highlightStart: Int,
+    highlightEnd: Int
+): List<TextSegmenter.Segment> {
+    if (text.isBlank()) return emptyList()
+
+    fun splitRange(from: Int, to: Int): List<TextSegmenter.Segment> {
+        if (from >= to) return emptyList()
+        return TextSegmenter.splitWithRanges(text.substring(from, to), 140).map { segment ->
+            segment.copy(
+                start = segment.start + from,
+                endExclusive = segment.endExclusive + from
+            )
+        }
+    }
+
+    if (highlightStart !in 0 until text.length ||
+        highlightEnd !in (highlightStart + 1)..text.length
+    ) return splitRange(0, text.length)
+
+    return buildList {
+        addAll(splitRange(0, highlightStart))
+        add(
+            TextSegmenter.Segment(
+                text.substring(highlightStart, highlightEnd),
+                highlightStart,
+                highlightEnd
+            )
+        )
+        addAll(splitRange(highlightEnd, text.length))
     }
 }
 

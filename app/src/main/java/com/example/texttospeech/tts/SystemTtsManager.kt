@@ -17,6 +17,7 @@ class SystemTtsManager(context: Context, private val listener: Listener) {
         fun onReady(voices: List<VoiceOption>, languages: List<LanguageOption>, chineseAvailable: Boolean)
         fun onInitializationFailed()
         fun onSpeaking(segmentIndex: Int)
+        fun onSentencePause(segmentIndex: Int)
         fun onFinished()
         fun onSpeechError(code: Int)
     }
@@ -72,10 +73,15 @@ class SystemTtsManager(context: Context, private val listener: Listener) {
 
             override fun onDone(utteranceId: String) {
                 mainHandler.post {
-                    if (activePrefix.isNotEmpty() && utteranceId == finalUtterance) {
-                        activePrefix = ""
-                        finalUtterance = ""
-                        listener.onFinished()
+                    if (activePrefix.isNotEmpty() && utteranceId.startsWith(activePrefix)) {
+                        if (utteranceId == finalUtterance) {
+                            activePrefix = ""
+                            finalUtterance = ""
+                            listener.onFinished()
+                        } else {
+                            val index = utteranceId.substringAfterLast('-').toIntOrNull() ?: 0
+                            listener.onSentencePause(index)
+                        }
                     }
                 }
             }
@@ -151,7 +157,8 @@ class SystemTtsManager(context: Context, private val listener: Listener) {
         languageTag: String,
         voiceName: String?,
         rate: Float,
-        pitch: Float
+        pitch: Float,
+        sentencePauseMillis: Long
     ): String? {
         val tts = engine ?: return appContext.getString(R.string.error_not_ready)
         if (!isReady) return appContext.getString(R.string.error_not_ready)
@@ -192,6 +199,18 @@ class SystemTtsManager(context: Context, private val listener: Listener) {
                 if (tts.speak(chunk, mode, null, "$activePrefix-$index") != TextToSpeech.SUCCESS) {
                     stop()
                     return appContext.getString(R.string.error_speak)
+                }
+                if (index < chunks.lastIndex && sentencePauseMillis > 0L) {
+                    val pauseId = "sentence-pause-${UUID.randomUUID()}"
+                    if (tts.playSilentUtterance(
+                            sentencePauseMillis,
+                            TextToSpeech.QUEUE_ADD,
+                            pauseId
+                        ) != TextToSpeech.SUCCESS
+                    ) {
+                        stop()
+                        return appContext.getString(R.string.error_speak)
+                    }
                 }
             }
             null

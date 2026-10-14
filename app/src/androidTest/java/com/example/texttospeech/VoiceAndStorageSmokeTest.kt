@@ -21,15 +21,14 @@ class VoiceAndStorageSmokeTest {
     val composeRule = createAndroidComposeRule<MainActivity>()
 
     @Test
-    fun switchesOnlineVoicesAndPlaybackModesWithoutCrashing() {
+    fun switchesCustomVoiceAndPlaybackModesWithoutCrashing() {
         composeRule.onNodeWithTag("mode_cycle").performClick().assertTextContains("单曲")
         composeRule.onNodeWithTag("mode_cycle").performClick().assertTextContains("随机")
         composeRule.onNodeWithTag("mode_cycle").performClick().assertTextContains("顺序")
 
         composeRule.onNodeWithTag("quality_settings").performClick()
-        selectVoiceFromSettings("online.ayaka")
-        selectVoiceFromSettings("online.eula")
-        selectVoiceFromSettings("online.klee")
+        selectVoiceFromSettings("online.custom")
+        selectVoiceFromSettings("system.default")
     }
 
     @Test

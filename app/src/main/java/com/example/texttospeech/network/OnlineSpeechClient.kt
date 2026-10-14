@@ -1,7 +1,6 @@
 package com.example.texttospeech.network
 
 import android.content.Context
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
@@ -39,36 +38,8 @@ class OnlineSpeechClient(context: Context) {
     class InvalidAudio : IOException("Response is not MP3 or WAV")
     class AudioTooLarge : IOException("Audio exceeds 20 MiB")
     class InvalidAddress : IOException("Invalid server address")
-    class AllServersUnavailable(
-        val failures: List<Exception>
-    ) : IOException("All public voice servers are unavailable", failures.lastOrNull())
-
     fun cancelActive() {
         activeCalls.forEach { it.cancel() }
-    }
-
-    suspend fun synthesizeFirstAvailable(
-        servers: List<String>,
-        parameters: Parameters,
-        onAttempt: (attempt: Int, total: Int) -> Unit = { _, _ -> }
-    ): File {
-        val candidates = servers.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
-        if (candidates.isEmpty()) throw InvalidAddress()
-
-        val failures = mutableListOf<Exception>()
-        candidates.forEachIndexed { index, server ->
-            currentCoroutineContext().ensureActive()
-            onAttempt(index + 1, candidates.size)
-            try {
-                return synthesize(server, parameters)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Exception) {
-                currentCoroutineContext().ensureActive()
-                failures += error
-            }
-        }
-        throw AllServersUnavailable(failures)
     }
 
     suspend fun synthesize(server: String, parameters: Parameters): File {
@@ -130,12 +101,5 @@ class OnlineSpeechClient(context: Context) {
             withContext(NonCancellable + Dispatchers.IO) { createdFile?.delete() }
             throw error
         }
-    }
-
-    companion object {
-        val PUBLIC_ENDPOINTS = listOf(
-            "http://245671.proxy.nscc-gz.cn:8888/",
-            "http://233366.proxy.nscc-gz.cn:8888/"
-        )
     }
 }

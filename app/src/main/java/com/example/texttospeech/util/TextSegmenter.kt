@@ -44,6 +44,9 @@ object TextSegmenter {
                 sentence = sentence.substring(take)
                 if (sentence.isNotEmpty()) flush()
             }
+            // Keep sentence boundaries instead of packing several sentences into one chunk.
+            // Playback can then add a natural pause and highlight only the sentence being read.
+            flush()
             start = end
             end = iterator.next()
         }

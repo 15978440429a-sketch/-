@@ -7,10 +7,7 @@ import android.speech.tts.TextToSpeech
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
-import com.example.texttospeech.model.AYAKA
 import com.example.texttospeech.model.CUSTOM
-import com.example.texttospeech.model.EULA
-import com.example.texttospeech.model.KLEE
 import com.example.texttospeech.model.LanguageOption
 import com.example.texttospeech.model.PlaybackMode
 import com.example.texttospeech.model.Playlist
@@ -18,7 +15,6 @@ import com.example.texttospeech.model.SYSTEM_DEFAULT
 import com.example.texttospeech.model.SavedText
 import com.example.texttospeech.model.UiState
 import com.example.texttospeech.model.VoiceOption
-import com.example.texttospeech.network.HuggingFaceVitsClient
 import com.example.texttospeech.network.OnlineSpeechClient
 import com.example.texttospeech.playback.AudioFilePlayer
 import com.example.texttospeech.playback.OfflineAudioExporter
@@ -50,9 +46,15 @@ class ReaderViewModel(
     application: Application,
     private val saved: SavedStateHandle
 ) : AndroidViewModel(application), SystemTtsManager.Listener {
+    private data class CachedSegmentAudio(
+        val segment: TextSegmenter.Segment,
+        val file: File
+    )
+
+    private class SegmentCacheFailure(cause: Throwable) : Exception(cause)
+
     private val app = application
     private val tts = SystemTtsManager(app, this)
-    private val huggingFace = HuggingFaceVitsClient(app)
     private val online = OnlineSpeechClient(app)
     private val audio = AudioFilePlayer()
     private val audioExporter = OfflineAudioExporter()
@@ -112,30 +114,6 @@ class ReaderViewModel(
             "跟随语言选择",
             app.getString(R.string.system_source),
             online = false
-        ),
-        VoiceOption(
-            AYAKA,
-            app.getString(R.string.ayaka),
-            "中文",
-            app.getString(R.string.public_source),
-            online = true,
-            onlineSpeaker = "神里绫华"
-        ),
-        VoiceOption(
-            EULA,
-            app.getString(R.string.eula),
-            "中文",
-            app.getString(R.string.public_source),
-            online = true,
-            onlineSpeaker = "优菈"
-        ),
-        VoiceOption(
-            KLEE,
-            app.getString(R.string.klee),
-            "中文",
-            app.getString(R.string.public_source),
-            online = true,
-            onlineSpeaker = "可莉"
         ),
         VoiceOption(
             CUSTOM,
@@ -613,12 +591,38 @@ class ReaderViewModel(
         if (state.text.isBlank() || token != playbackGeneration) return
         activePlaybackToken = token
         val option = state.voices.firstOrNull { it.id == state.voiceId }
+        val cachedSegments = cachedSegmentsFor(state)
         val cached = cachedAudioFor(state)
         when {
+            cachedSegments.isNotEmpty() -> playDownloadedSegments(cachedSegments, token)
             cached != null -> playDownloadedAudio(state, cached, token)
             option?.online == true -> playOnline(state, option, token)
             else -> playOffline(state, option, token)
         }
+    }
+
+    private fun cachedSegmentsFor(state: UiState): List<CachedSegmentAudio> {
+        val document = state.savedTexts.firstOrNull { it.id == state.selectedTextId }
+            ?: return emptyList()
+        if (document.offlineVoiceId != state.voiceId ||
+            document.offlineTextHash != textHash(state.text)
+        ) return emptyList()
+        val directory = segmentCacheDirectory(document.id, state.voiceId)
+        val files = directory.listFiles()?.filter(File::isFile)?.sortedBy { it.name }
+            ?: return emptyList()
+        val parsed = files.mapNotNull { file ->
+            val match = SEGMENT_FILE_PATTERN.matchEntire(file.name) ?: return@mapNotNull null
+            val start = match.groupValues[2].toIntOrNull() ?: return@mapNotNull null
+            val end = match.groupValues[3].toIntOrNull() ?: return@mapNotNull null
+            if (start !in 0 until state.text.length || end !in (start + 1)..state.text.length) {
+                return@mapNotNull null
+            }
+            CachedSegmentAudio(
+                TextSegmenter.Segment(state.text.substring(start, end), start, end),
+                file
+            )
+        }
+        return parsed.takeIf { it.isNotEmpty() && it.size == files.size } ?: emptyList()
     }
 
     private fun cachedAudioFor(state: UiState): File? {
@@ -634,18 +638,55 @@ class ReaderViewModel(
     private fun playDownloadedAudio(state: UiState, file: File, token: Long) {
         offlineTtsActive = false
         activeSegmentIndex = 0
-        activeSegments = listOf(TextSegmenter.Segment(state.text, 0, state.text.length))
+        activeSegments = emptyList()
         _uiState.value = _uiState.value.copy(
             busy = true,
             paused = false,
-            status = app.getString(R.string.status_offline_audio_playing),
-            highlightStart = 0,
-            highlightEnd = state.text.length
+            status = app.getString(R.string.status_legacy_offline_audio_playing),
+            highlightStart = -1,
+            highlightEnd = -1
         )
         onlineJob = viewModelScope.launch {
             val job = currentCoroutineContext()[Job]
             try {
                 audio.play(file, startPaused = _uiState.value.paused)
+            } catch (_: CancellationException) {
+                return@launch
+            } catch (error: Exception) {
+                currentCoroutineContext().ensureActive()
+                showError(onlineError(error))
+                return@launch
+            } finally {
+                if (onlineJob === job) onlineJob = null
+            }
+            completePlayback(token)
+        }
+    }
+
+    private fun playDownloadedSegments(parts: List<CachedSegmentAudio>, token: Long) {
+        offlineTtsActive = false
+        activeSegmentIndex = 0
+        activeSegments = parts.map(CachedSegmentAudio::segment)
+        _uiState.value = _uiState.value.copy(
+            busy = true,
+            paused = false,
+            status = app.getString(R.string.status_offline_audio_playing),
+            highlightStart = -1,
+            highlightEnd = -1
+        )
+        onlineJob = viewModelScope.launch {
+            val job = currentCoroutineContext()[Job]
+            try {
+                parts.forEachIndexed { index, part ->
+                    if (activePlaybackToken != token) return@launch
+                    awaitPlaybackResumed(token)
+                    showActiveSegment(
+                        part.segment,
+                        app.getString(R.string.status_offline_audio_playing)
+                    )
+                    audio.play(part.file, startPaused = _uiState.value.paused)
+                    pauseBetweenSentences(index, parts.lastIndex, token)
+                }
             } catch (_: CancellationException) {
                 return@launch
             } catch (error: Exception) {
@@ -680,13 +721,10 @@ class ReaderViewModel(
         onlineJob = viewModelScope.launch {
             val job = currentCoroutineContext()[Job]
             try {
-                val publicVoice = state.voiceId != CUSTOM
-                val segmentLimit = if (publicVoice) 96 else 180
-                val maximumSegments = if (publicVoice) 125 else 80
                 val segments = withContext(Dispatchers.Default) {
-                    TextSegmenter.splitWithRanges(state.text, segmentLimit)
+                    TextSegmenter.splitWithRanges(state.text, 180)
                 }
-                if (segments.size > maximumSegments) {
+                if (segments.size > 80) {
                     showError(app.getString(R.string.error_online_length))
                     return@launch
                 }
@@ -694,9 +732,14 @@ class ReaderViewModel(
                 segments.forEachIndexed { index, segment ->
                     if (activePlaybackToken != token) return@launch
                     awaitPlaybackResumed(token)
-                    showActiveSegment(
-                        segment,
-                        app.getString(R.string.status_requesting, index + 1, segments.size)
+                    _uiState.value = _uiState.value.copy(
+                        status = app.getString(
+                            R.string.status_requesting,
+                            index + 1,
+                            segments.size
+                        ),
+                        highlightStart = -1,
+                        highlightEnd = -1
                     )
                     val parameters = OnlineSpeechClient.Parameters(
                         segment.text,
@@ -705,11 +748,7 @@ class ReaderViewModel(
                         state.noise,
                         state.length
                     )
-                    val file = if (publicVoice) {
-                        synthesizePreset(parameters, index + 1, segments.size, segment)
-                    } else {
-                        online.synthesize(customServer, parameters)
-                    }
+                    val file = online.synthesize(customServer, parameters)
                     try {
                         awaitPlaybackResumed(token)
                         showActiveSegment(
@@ -721,6 +760,7 @@ class ReaderViewModel(
                             )
                         )
                         audio.play(file, startPaused = _uiState.value.paused)
+                        pauseBetweenSentences(index, segments.lastIndex, token)
                     } finally {
                         withContext(NonCancellable + Dispatchers.IO) { file.delete() }
                     }
@@ -735,61 +775,6 @@ class ReaderViewModel(
                 if (onlineJob === job) onlineJob = null
             }
             completePlayback(token)
-        }
-    }
-
-    private suspend fun synthesizePreset(
-        parameters: OnlineSpeechClient.Parameters,
-        part: Int,
-        total: Int,
-        segment: TextSegmenter.Segment?
-    ): File = try {
-        huggingFace.synthesize(
-            HuggingFaceVitsClient.Parameters(
-                text = parameters.text,
-                speaker = parameters.speaker,
-                noise = parameters.noise,
-                length = parameters.length
-            )
-        ) { stage ->
-            val stringId = when (stage) {
-                HuggingFaceVitsClient.Stage.CONNECTING -> R.string.status_hf_connecting
-                HuggingFaceVitsClient.Stage.WAITING -> R.string.status_hf_waiting
-                HuggingFaceVitsClient.Stage.SYNTHESIZING -> R.string.status_hf_synthesizing
-            }
-            updateSynthesisStatus(segment, app.getString(stringId, part, total))
-        }
-    } catch (cancelled: CancellationException) {
-        throw cancelled
-    } catch (huggingFaceError: Exception) {
-        currentCoroutineContext().ensureActive()
-        updateSynthesisStatus(
-            segment,
-            app.getString(R.string.status_fallback_public, part, total)
-        )
-        try {
-            online.synthesizeFirstAvailable(
-                OnlineSpeechClient.PUBLIC_ENDPOINTS,
-                parameters
-            ) { attempt, _ ->
-                if (attempt > 1) {
-                    updateSynthesisStatus(
-                        segment,
-                        app.getString(R.string.status_retrying_public, part, total)
-                    )
-                }
-            }
-        } catch (legacyError: Exception) {
-            legacyError.addSuppressed(huggingFaceError)
-            throw legacyError
-        }
-    }
-
-    private fun updateSynthesisStatus(segment: TextSegmenter.Segment?, status: String) {
-        if (segment == null) {
-            _uiState.value = _uiState.value.copy(status = status)
-        } else {
-            showActiveSegment(segment, status)
         }
     }
 
@@ -823,7 +808,8 @@ class ReaderViewModel(
                     state.languageTag,
                     option?.systemVoiceName,
                     state.rate,
-                    state.pitch
+                    state.pitch,
+                    SENTENCE_PAUSE_MILLIS
                 )
                 if (error != null) showError(error)
             } catch (_: CancellationException) {
@@ -847,7 +833,8 @@ class ReaderViewModel(
             state.languageTag,
             option?.systemVoiceName,
             state.rate,
-            state.pitch
+            state.pitch,
+            SENTENCE_PAUSE_MILLIS
         )
         if (error != null) showError(error)
     }
@@ -855,6 +842,17 @@ class ReaderViewModel(
     private suspend fun awaitPlaybackResumed(token: Long) {
         while (_uiState.value.paused && activePlaybackToken == token) delay(80)
         currentCoroutineContext().ensureActive()
+    }
+
+    private suspend fun pauseBetweenSentences(index: Int, lastIndex: Int, token: Long) {
+        if (index >= lastIndex || activePlaybackToken != token) return
+        _uiState.value = _uiState.value.copy(
+            status = app.getString(R.string.status_sentence_pause),
+            highlightStart = -1,
+            highlightEnd = -1
+        )
+        delay(SENTENCE_PAUSE_MILLIS)
+        awaitPlaybackResumed(token)
     }
 
     private fun showActiveSegment(segment: TextSegmenter.Segment, status: String) {
@@ -973,12 +971,10 @@ class ReaderViewModel(
             val job = currentCoroutineContext()[Job]
             val parts = mutableListOf<File>()
             try {
-                val publicVoice = state.voiceId != CUSTOM
                 val segments = withContext(Dispatchers.Default) {
-                    TextSegmenter.splitWithRanges(state.text, if (publicVoice) 96 else 180)
+                    TextSegmenter.splitWithRanges(state.text, 180)
                 }
-                val maximumSegments = if (publicVoice) 125 else 80
-                if (segments.size > maximumSegments) {
+                if (segments.size > 80) {
                     showError(app.getString(R.string.error_online_length))
                     return@launch
                 }
@@ -999,11 +995,7 @@ class ReaderViewModel(
                         noise = state.noise,
                         length = state.length
                     )
-                    parts += if (publicVoice) {
-                        synthesizePreset(parameters, index + 1, segments.size, null)
-                    } else {
-                        online.synthesize(state.serverUrl.trim(), parameters)
-                    }
+                    parts += online.synthesize(state.serverUrl.trim(), parameters)
                 }
 
                 _uiState.value = _uiState.value.copy(
@@ -1016,7 +1008,13 @@ class ReaderViewModel(
                     document.offlineAudioPath,
                     document.offlineWavPath
                 )
-                audioExporter.createMp3AndWav(parts, mp3Destination, wavDestination)
+                audioExporter.createMp3AndWav(
+                    parts,
+                    mp3Destination,
+                    wavDestination,
+                    SENTENCE_PAUSE_MILLIS
+                )
+                replaceSegmentCache(document.id, state.voiceId, segments, parts)
                 textRepository.attachOfflineAudio(
                     document.id,
                     mp3Destination.absolutePath,
@@ -1042,6 +1040,7 @@ class ReaderViewModel(
                     is OfflineAudioExporter.UnsupportedWave,
                     is OfflineAudioExporter.EncodingFailed ->
                         app.getString(R.string.error_mp3_encoding)
+                    is SegmentCacheFailure -> app.getString(R.string.error_storage)
                     else -> onlineError(error)
                 }
                 showError(message)
@@ -1063,7 +1062,10 @@ class ReaderViewModel(
         viewModelScope.launch {
             try {
                 textRepository.clearOfflineAudio(document.id)
-                withContext(Dispatchers.IO) { paths.distinct().forEach { File(it).delete() } }
+                withContext(Dispatchers.IO) {
+                    paths.distinct().forEach { File(it).delete() }
+                    deleteSegmentCaches(document.id)
+                }
                 refreshLibrary()
                 _uiState.value = _uiState.value.copy(
                     status = app.getString(R.string.status_download_removed)
@@ -1118,6 +1120,57 @@ class ReaderViewModel(
         listOfNotNull(document.offlineAudioPath, document.offlineWavPath)
             .distinct()
             .forEach { File(it).delete() }
+        deleteSegmentCaches(document.id)
+    }
+
+    private suspend fun replaceSegmentCache(
+        documentId: Long,
+        voiceId: String,
+        segments: List<TextSegmenter.Segment>,
+        parts: List<File>
+    ) = withContext(Dispatchers.IO) {
+        if (segments.isEmpty() || segments.size != parts.size) {
+            throw@withContext SegmentCacheFailure(
+                IllegalStateException("Sentence audio cache is incomplete")
+            )
+        }
+        val root = File(app.filesDir, "offline_audio").apply { mkdirs() }
+        val destination = segmentCacheDirectory(documentId, voiceId)
+        val temporary = File(root, ".${destination.name}-${System.nanoTime()}")
+        try {
+            if (!temporary.mkdirs()) throw java.io.IOException("Cannot create segment cache")
+            segments.zip(parts).forEachIndexed { index, (segment, source) ->
+                val name = String.format(
+                    Locale.US,
+                    "%04d_%d_%d.wav",
+                    index,
+                    segment.start,
+                    segment.endExclusive
+                )
+                source.copyTo(File(temporary, name), overwrite = true)
+            }
+            deleteSegmentCaches(documentId)
+            if (!temporary.renameTo(destination)) {
+                if (!destination.mkdirs()) throw java.io.IOException("Cannot create final cache")
+                temporary.listFiles().orEmpty().forEach { source ->
+                    source.copyTo(File(destination, source.name), overwrite = true)
+                }
+                if (!temporary.deleteRecursively()) temporary.deleteOnExit()
+            }
+        } catch (error: Exception) {
+            temporary.deleteRecursively()
+            throw SegmentCacheFailure(error)
+        }
+    }
+
+    private fun segmentCacheDirectory(documentId: Long, voiceId: String): File =
+        File(app.filesDir, "offline_audio/$documentId-$voiceId-segments")
+
+    private fun deleteSegmentCaches(documentId: Long) {
+        val root = File(app.filesDir, "offline_audio")
+        root.listFiles().orEmpty()
+            .filter { it.isDirectory && it.name.startsWith("$documentId-") && it.name.endsWith("-segments") }
+            .forEach(File::deleteRecursively)
     }
 
     private fun currentDocument(): SavedText? {
@@ -1203,7 +1256,6 @@ class ReaderViewModel(
     }
 
     private fun onlineError(error: Exception): String = when (error) {
-        is OnlineSpeechClient.AllServersUnavailable -> app.getString(R.string.error_public_service)
         is OnlineSpeechClient.HttpFailure -> app.getString(R.string.error_http, error.code)
         is OnlineSpeechClient.InvalidAudio -> app.getString(R.string.error_non_audio)
         is OnlineSpeechClient.AudioTooLarge -> app.getString(R.string.error_audio_too_large)
@@ -1232,7 +1284,6 @@ class ReaderViewModel(
         onlineJob = null
         downloadJob?.cancel()
         downloadJob = null
-        runCatching { huggingFace.cancelActive() }
         runCatching { online.cancelActive() }
         runCatching { audio.stop() }
         tts.stop()
@@ -1324,6 +1375,17 @@ class ReaderViewModel(
         )
     }
 
+    override fun onSentencePause(segmentIndex: Int) {
+        if (activeSegments.isEmpty()) return
+        val absoluteIndex = (ttsSegmentOffset + segmentIndex).coerceAtLeast(0)
+        activeSegmentIndex = (absoluteIndex + 1).coerceAtMost(activeSegments.lastIndex)
+        _uiState.value = _uiState.value.copy(
+            status = app.getString(R.string.status_sentence_pause),
+            highlightStart = -1,
+            highlightEnd = -1
+        )
+    }
+
     override fun onFinished() {
         completePlayback(activePlaybackToken)
     }
@@ -1364,5 +1426,7 @@ class ReaderViewModel(
         private const val SETTINGS_NAME = "reader_settings"
         private const val PREF_TIMER_TARGET = "timer_target"
         private const val PREF_TIMER_MINUTES = "timer_minutes"
+        private const val SENTENCE_PAUSE_MILLIS = 350L
+        private val SEGMENT_FILE_PATTERN = Regex("(\\d{4})_(\\d+)_(\\d+)\\.wav")
     }
 }

@@ -2,11 +2,10 @@ package com.example.texttospeech
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import com.example.texttospeech.network.HuggingFaceVitsClient
 import com.example.texttospeech.network.OnlineSpeechClient
 import com.example.texttospeech.playback.OfflineAudioExporter
+import com.example.texttospeech.util.TextSegmenter
 import kotlinx.coroutines.runBlocking
-import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -28,102 +27,37 @@ import kotlin.math.sin
 @RunWith(AndroidJUnit4::class)
 class OnlineSpeechClientInstrumentedTest {
     @Test
-    fun buildsGradioQueuePayloadForAyaka() {
-        val payload = JSONObject(
-            HuggingFaceVitsClient.buildDataPayload(
-                sessionHash = "session-1",
-                fnIndex = 0,
-                speakerValue = "神里绫华（龟龟）",
-                parameters = HuggingFaceVitsClient.Parameters(
+    fun splitsTextAtEverySentenceForPauseAndHighlight() {
+        val text = "第一句话。第二句话？第三句话！"
+        val segments = TextSegmenter.splitWithRanges(text, 96)
+
+        assertEquals(listOf("第一句话。", "第二句话？", "第三句话！"), segments.map { it.text })
+        assertEquals(listOf(0, 5, 10), segments.map { it.start })
+        assertEquals(listOf(5, 10, 15), segments.map { it.endExclusive })
+    }
+
+    @Test
+    fun downloadsAudioFromCustomSovitsCompatibleServer() = runBlocking {
+        OneShotHttpServer(200, validWav(), "audio/wav").use { server ->
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            val client = OnlineSpeechClient(context)
+            val audio = client.synthesize(
+                server.url,
+                OnlineSpeechClient.Parameters(
                     text = "你好",
-                    speaker = "神里绫华",
-                    noise = 0.6f,
+                    speaker = "神里绫华-v2",
+                    format = "wav",
+                    noise = 0.667f,
                     length = 1.2f
                 )
             )
-        )
 
-        assertEquals("session-1", payload.getString("session_hash"))
-        assertEquals(0, payload.getInt("fn_index"))
-        val data = payload.getJSONArray("data")
-        assertEquals("你好", data.getString(0))
-        assertEquals("中文", data.getString(1))
-        assertEquals("神里绫华（龟龟）", data.getString(2))
-        assertEquals(0.668, data.getDouble(4), 0.0001)
-        assertEquals(1.2, data.getDouble(5), 0.0001)
-    }
-
-    @Test
-    fun discoversAllThreeSpeakersFromSpaceConfig() {
-        val configHtml = """
-            <script>window.gradio_config = {
-              "enable_queue": true,
-              "components": [
-                {"id": 6, "props": {"label": "Text (100 words limitation)"}},
-                {"id": 13, "props": {"label": "Speaker", "choices": [
-                  "其他角色", "神里绫华（龟龟）", "可莉", "优菈"
-                ]}}
-              ],
-              "dependencies": [
-                {"backend_fn": false, "inputs": []},
-                {"backend_fn": true, "inputs": [6, 13], "outputs": [22, 23, 24]}
-              ]
-            };</script>
-        """.trimIndent()
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val config = HuggingFaceVitsClient(context).parseConfig(configHtml)
-
-        assertEquals(1, config.fnIndex)
-        assertEquals("神里绫华（龟龟）", config.speakerValues["神里绫华"])
-        assertEquals("可莉", config.speakerValues["可莉"])
-        assertEquals("优菈", config.speakerValues["优菈"])
-    }
-
-    @Test
-    fun readsBase64AudioFromCompletedQueueMessage() {
-        val expected = "data:audio/wav;base64,UklGRg=="
-        val message = JSONObject()
-            .put("msg", "process_completed")
-            .put("success", true)
-            .put(
-                "output",
-                JSONObject().put(
-                    "data",
-                    org.json.JSONArray().put("生成成功").put(expected).put("完成")
-                )
-            )
-
-        assertEquals(expected, HuggingFaceVitsClient.extractAudioDataUri(message))
-    }
-
-    @Test
-    fun retriesBackupServerAndAcceptsReturnedAudio() = runBlocking {
-        OneShotHttpServer(503, ByteArray(0), "text/plain").use { primary ->
-            OneShotHttpServer(200, validWav(), "audio/wav").use { backup ->
-                val context = InstrumentationRegistry.getInstrumentation().targetContext
-                val client = OnlineSpeechClient(context)
-                val attempts = mutableListOf<Int>()
-
-                val audio = client.synthesizeFirstAvailable(
-                    listOf(primary.url, backup.url),
-                    OnlineSpeechClient.Parameters(
-                        text = "你好",
-                        speaker = "神里绫华",
-                        format = "wav",
-                        noise = 0.667f,
-                        length = 1.2f
-                    )
-                ) { attempt, _ -> attempts += attempt }
-
-                try {
-                    assertTrue(audio.exists())
-                    assertEquals(128L, audio.length())
-                    assertEquals(listOf(1, 2), attempts)
-                    assertEquals(1, primary.requestCount.get())
-                    assertEquals(1, backup.requestCount.get())
-                } finally {
-                    audio.delete()
-                }
+            try {
+                assertTrue(audio.exists())
+                assertEquals(128L, audio.length())
+                assertEquals(1, server.requestCount.get())
+            } finally {
+                audio.delete()
             }
         }
     }
@@ -143,12 +77,15 @@ class OnlineSpeechClientInstrumentedTest {
             val result = OfflineAudioExporter().createMp3AndWav(
                 wavParts = listOf(first, second),
                 mp3Destination = mp3,
-                wavDestination = wav
+                wavDestination = wav,
+                sentencePauseMillis = 350L
             )
 
             assertEquals(mp3.absolutePath, result.mp3.absolutePath)
             assertEquals(wav.absolutePath, result.wav.absolutePath)
             assertTrue(wav.length() > 44)
+            val expectedPauseBytes = (22_050L * 350L / 1_000L) * 2L
+            assertEquals(44L + 44_100L * 2L + expectedPauseBytes, wav.length())
             assertEquals("RIFF", wav.inputStream().use { input ->
                 ByteArray(4).also { input.read(it) }.toString(StandardCharsets.US_ASCII)
             })

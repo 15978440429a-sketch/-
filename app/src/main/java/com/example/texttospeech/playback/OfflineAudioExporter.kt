@@ -21,7 +21,8 @@ class OfflineAudioExporter {
     suspend fun createMp3AndWav(
         wavParts: List<File>,
         mp3Destination: File,
-        wavDestination: File
+        wavDestination: File,
+        sentencePauseMillis: Long = 0L
     ): Result =
         withContext(Dispatchers.IO) {
             require(wavParts.isNotEmpty()) { "At least one WAV part is required" }
@@ -45,7 +46,7 @@ class OfflineAudioExporter {
             val combinedWave = File.createTempFile("combined-", ".wav", wavDirectory)
             val temporaryMp3 = File.createTempFile("encoded-", ".mp3", mp3Directory)
             try {
-                writeCombinedWave(wavParts, infos, combinedWave)
+                writeCombinedWave(wavParts, infos, combinedWave, sentencePauseMillis)
                 coroutineContext.ensureActive()
                 val result = Main().run(
                     arrayOf(
@@ -78,13 +79,18 @@ class OfflineAudioExporter {
     private suspend fun writeCombinedWave(
         files: List<File>,
         infos: List<WaveInfo>,
-        output: File
+        output: File,
+        sentencePauseMillis: Long
     ) {
-        val totalDataLength = infos.sumOf { it.dataLength }
+        val first = infos.first()
+        val blockAlign = first.channels * first.bitsPerSample / 8
+        val pauseSamples = first.sampleRate.toLong() * sentencePauseMillis.coerceAtLeast(0L) / 1_000L
+        val pauseBytes = pauseSamples * blockAlign
+        val totalDataLength = infos.sumOf { it.dataLength } +
+            pauseBytes * (files.size - 1).coerceAtLeast(0)
         if (totalDataLength <= 0 || totalDataLength > MAX_PCM_BYTES) {
             throw UnsupportedWave("Combined audio is empty or too large")
         }
-        val first = infos.first()
         DataOutputStream(BufferedOutputStream(output.outputStream())).use { sink ->
             sink.writeAscii("RIFF")
             sink.writeLittleInt((36L + totalDataLength).toInt())
@@ -94,7 +100,6 @@ class OfflineAudioExporter {
             sink.writeLittleShort(first.audioFormat)
             sink.writeLittleShort(first.channels)
             sink.writeLittleInt(first.sampleRate)
-            val blockAlign = first.channels * first.bitsPerSample / 8
             sink.writeLittleInt(first.sampleRate * blockAlign)
             sink.writeLittleShort(blockAlign)
             sink.writeLittleShort(first.bitsPerSample)
@@ -102,7 +107,7 @@ class OfflineAudioExporter {
             sink.writeLittleInt(totalDataLength.toInt())
 
             val buffer = ByteArray(32 * 1024)
-            files.zip(infos).forEach { (file, info) ->
+            files.zip(infos).forEachIndexed { index, (file, info) ->
                 RandomAccessFile(file, "r").use { source ->
                     source.seek(info.dataOffset)
                     var remaining = info.dataLength
@@ -112,6 +117,16 @@ class OfflineAudioExporter {
                         if (count < 0) throw UnsupportedWave("WAV data ended unexpectedly")
                         sink.write(buffer, 0, count)
                         remaining -= count
+                    }
+                }
+                if (index < files.lastIndex && pauseBytes > 0L) {
+                    var remainingSilence = pauseBytes
+                    buffer.fill(0)
+                    while (remainingSilence > 0L) {
+                        coroutineContext.ensureActive()
+                        val count = minOf(buffer.size.toLong(), remainingSilence).toInt()
+                        sink.write(buffer, 0, count)
+                        remainingSilence -= count
                     }
                 }
             }
