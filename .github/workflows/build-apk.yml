@@ -45,7 +45,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Test voice switching, storage, and server fallback on Android
+      - name: Test voice switching, storage, and custom server on Android
         uses: ReactiveCircus/android-emulator-runner@v2
         with:
           api-level: 35
