@@ -352,7 +352,7 @@ class HuggingFaceVitsClient(context: Context) {
     )
 
     companion object {
-        const val SPACE_ORIGIN = "https://zomehwh-vits-uma-genshin-honkai.hf.space/"
+        const val SPACE_ORIGIN = "https://zomehwh-vits-uma-genshin-honkai.hf.space"
         const val QUEUE_URL = "wss://zomehwh-vits-uma-genshin-honkai.hf.space/queue/join"
         private const val USER_AGENT = "TextToSpeech-Android/1.3"
         private const val CONFIG_MARKER = "window.gradio_config = "
