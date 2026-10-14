@@ -246,7 +246,7 @@ private fun ReaderScreen(
             ui = ui,
             reader = reader,
             onSave = {
-                saveName = reader.suggestedTitle()
+                saveName = ""
                 saveNameDialog = true
             },
             onDelete = { pendingDeleteId = it }
@@ -332,6 +332,7 @@ private fun ReaderScreen(
             value = saveName,
             label = stringResource(R.string.document_name),
             confirmLabel = stringResource(R.string.save_text),
+            fieldTestTag = "document_name_input",
             onValueChange = { saveName = it.take(60) },
             onConfirm = {
                 reader.saveCurrentText(saveName)
@@ -346,6 +347,7 @@ private fun ReaderScreen(
             value = playlistName,
             label = stringResource(R.string.playlist_name),
             confirmLabel = stringResource(R.string.create),
+            fieldTestTag = "playlist_name_input",
             onValueChange = { playlistName = it.take(40) },
             onConfirm = {
                 reader.createPlaylist(playlistName)
@@ -415,6 +417,7 @@ private fun NameInputDialog(
     value: String,
     label: String,
     confirmLabel: String,
+    fieldTestTag: String,
     onValueChange: (String) -> Unit,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
@@ -428,7 +431,7 @@ private fun NameInputDialog(
                 onValueChange = onValueChange,
                 label = { Text(label) },
                 singleLine = true,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth().testTag(fieldTestTag)
             )
         },
         confirmButton = {
@@ -707,7 +710,7 @@ private fun TextLibrarySection(
                 Button(
                     onClick = onSave,
                     enabled = ui.text.isNotBlank(),
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f).testTag("save_document")
                 ) {
                     Text(stringResource(R.string.save_text))
                 }

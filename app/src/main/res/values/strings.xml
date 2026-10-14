@@ -21,7 +21,6 @@
     <string name="now_playing_mark">▶ 正在朗读</string>
     <string name="now_reading">正在朗读的内容</string>
     <string name="unsaved_draft">未保存草稿</string>
-    <string name="unnamed_document">未命名文稿</string>
     <string name="name_document">给文稿命名</string>
     <string name="document_name">文稿名称</string>
     <string name="playback_mode">播放模式</string>

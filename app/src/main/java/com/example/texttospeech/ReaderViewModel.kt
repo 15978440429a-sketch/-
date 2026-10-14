@@ -243,14 +243,6 @@ class ReaderViewModel(
         scheduleDraftSave(0)
     }
 
-    fun suggestedTitle(): String {
-        val state = _uiState.value
-        state.savedTexts.firstOrNull { it.id == state.selectedTextId }?.let { return it.title }
-        val line = state.text.lineSequence().map(String::trim).firstOrNull(String::isNotEmpty)
-            ?: app.getString(R.string.unnamed_document)
-        return line.take(40)
-    }
-
     fun saveCurrentText(title: String) {
         val state = _uiState.value
         if (state.text.isBlank()) {

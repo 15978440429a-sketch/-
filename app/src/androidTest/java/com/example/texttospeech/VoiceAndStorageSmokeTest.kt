@@ -2,6 +2,7 @@ package com.example.texttospeech
 
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
@@ -45,6 +46,19 @@ class VoiceAndStorageSmokeTest {
             }.isSuccess
         }
         composeRule.onNodeWithTag("text_input").assertTextContains(draft)
+    }
+
+    @Test
+    fun documentNameInputStartsBlank() {
+        composeRule.onNodeWithTag("text_input")
+            .performScrollTo()
+            .performTextReplacement("这是正文，不应该自动成为文稿名称。")
+
+        composeRule.onNodeWithTag("save_document")
+            .performScrollTo()
+            .performClick()
+
+        composeRule.onNodeWithTag("document_name_input").assertTextEquals("")
     }
 
     private fun selectVoice(id: String) {
