@@ -540,6 +540,13 @@ private fun OnlineSettings(ui: UiState, reader: ReaderViewModel) {
     TextButton(onClick = { reader.setFormat(if (ui.format == "mp3") "wav" else "mp3") }) {
         Text(stringResource(R.string.format, ui.format))
     }
+    if (ui.voiceId != CUSTOM) {
+        Text(
+            stringResource(R.string.hf_format_note),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
     if (ui.voiceId == CUSTOM) {
         Text(stringResource(R.string.custom_server), style = MaterialTheme.typography.titleMedium)
         OutlinedTextField(

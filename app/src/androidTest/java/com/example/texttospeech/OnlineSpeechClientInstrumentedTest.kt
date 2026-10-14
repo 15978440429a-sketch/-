@@ -2,8 +2,10 @@ package com.example.texttospeech
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.example.texttospeech.network.HuggingFaceVitsClient
 import com.example.texttospeech.network.OnlineSpeechClient
 import kotlinx.coroutines.runBlocking
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -19,6 +21,75 @@ import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(AndroidJUnit4::class)
 class OnlineSpeechClientInstrumentedTest {
+    @Test
+    fun buildsGradioQueuePayloadForAyaka() {
+        val payload = JSONObject(
+            HuggingFaceVitsClient.buildDataPayload(
+                sessionHash = "session-1",
+                fnIndex = 0,
+                speakerIndex = 87,
+                parameters = HuggingFaceVitsClient.Parameters(
+                    text = "你好",
+                    speaker = "神里绫华",
+                    noise = 0.6f,
+                    length = 1.2f
+                )
+            )
+        )
+
+        assertEquals("session-1", payload.getString("session_hash"))
+        assertEquals(0, payload.getInt("fn_index"))
+        val data = payload.getJSONArray("data")
+        assertEquals("你好", data.getString(0))
+        assertEquals(0, data.getInt(1))
+        assertEquals(87, data.getInt(2))
+        assertEquals(0.668, data.getDouble(4), 0.0001)
+        assertEquals(1.2, data.getDouble(5), 0.0001)
+    }
+
+    @Test
+    fun discoversAllThreeSpeakersFromSpaceConfig() {
+        val configHtml = """
+            <script>window.gradio_config = {
+              "enable_queue": true,
+              "components": [
+                {"id": 6, "props": {"label": "Text (100 words limitation)"}},
+                {"id": 13, "props": {"label": "Speaker", "choices": [
+                  "其他角色", "神里绫华（龟龟）", "可莉", "优菈"
+                ]}}
+              ],
+              "dependencies": [
+                {"backend_fn": false, "inputs": []},
+                {"backend_fn": true, "inputs": [6, 13], "outputs": [22, 23, 24]}
+              ]
+            };</script>
+        """.trimIndent()
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val config = HuggingFaceVitsClient(context).parseConfig(configHtml)
+
+        assertEquals(1, config.fnIndex)
+        assertEquals(1, config.speakerIndexes["神里绫华"])
+        assertEquals(2, config.speakerIndexes["可莉"])
+        assertEquals(3, config.speakerIndexes["优菈"])
+    }
+
+    @Test
+    fun readsBase64AudioFromCompletedQueueMessage() {
+        val expected = "data:audio/wav;base64,UklGRg=="
+        val message = JSONObject()
+            .put("msg", "process_completed")
+            .put("success", true)
+            .put(
+                "output",
+                JSONObject().put(
+                    "data",
+                    org.json.JSONArray().put("生成成功").put(expected).put("完成")
+                )
+            )
+
+        assertEquals(expected, HuggingFaceVitsClient.extractAudioDataUri(message))
+    }
+
     @Test
     fun retriesBackupServerAndAcceptsReturnedAudio() = runBlocking {
         OneShotHttpServer(503, ByteArray(0), "text/plain").use { primary ->

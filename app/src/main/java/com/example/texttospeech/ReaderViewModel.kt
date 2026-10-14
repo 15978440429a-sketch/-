@@ -15,6 +15,7 @@ import com.example.texttospeech.model.SYSTEM_DEFAULT
 import com.example.texttospeech.model.SavedText
 import com.example.texttospeech.model.UiState
 import com.example.texttospeech.model.VoiceOption
+import com.example.texttospeech.network.HuggingFaceVitsClient
 import com.example.texttospeech.network.OnlineSpeechClient
 import com.example.texttospeech.playback.AudioFilePlayer
 import com.example.texttospeech.storage.TextRepository
@@ -44,6 +45,7 @@ class ReaderViewModel(
 ) : AndroidViewModel(application), SystemTtsManager.Listener {
     private val app = application
     private val tts = SystemTtsManager(app, this)
+    private val huggingFace = HuggingFaceVitsClient(app)
     private val online = OnlineSpeechClient(app)
     private val audio = AudioFilePlayer()
     private val textRepository = TextRepository(app)
@@ -421,10 +423,13 @@ class ReaderViewModel(
         onlineJob = viewModelScope.launch {
             val job = coroutineContext[Job]
             try {
+                val publicVoice = state.voiceId != CUSTOM
+                val segmentLimit = if (publicVoice) 96 else 180
+                val maximumSegments = if (publicVoice) 125 else 80
                 val segments = withContext(Dispatchers.Default) {
-                    TextSegmenter.splitWithRanges(state.text, 180)
+                    TextSegmenter.splitWithRanges(state.text, segmentLimit)
                 }
-                if (segments.size > 80) {
+                if (segments.size > maximumSegments) {
                     showError(app.getString(R.string.error_online_length))
                     return@launch
                 }
@@ -438,22 +443,62 @@ class ReaderViewModel(
                     val parameters = OnlineSpeechClient.Parameters(
                         segment.text, speaker, state.format, state.noise, state.length
                     )
-                    val file = if (state.voiceId == CUSTOM) {
+                    val file = if (!publicVoice) {
                         online.synthesize(customServer, parameters)
                     } else {
-                        online.synthesizeFirstAvailable(
-                            OnlineSpeechClient.PUBLIC_ENDPOINTS,
-                            parameters
-                        ) { attempt, _ ->
-                            if (attempt > 1) {
+                        try {
+                            huggingFace.synthesize(
+                                HuggingFaceVitsClient.Parameters(
+                                    text = segment.text,
+                                    speaker = speaker,
+                                    noise = state.noise,
+                                    length = state.length
+                                )
+                            ) { stage ->
+                                val status = when (stage) {
+                                    HuggingFaceVitsClient.Stage.CONNECTING ->
+                                        R.string.status_hf_connecting
+                                    HuggingFaceVitsClient.Stage.WAITING ->
+                                        R.string.status_hf_waiting
+                                    HuggingFaceVitsClient.Stage.SYNTHESIZING ->
+                                        R.string.status_hf_synthesizing
+                                }
                                 showActiveSegment(
                                     segment,
-                                    app.getString(
-                                        R.string.status_retrying_public,
-                                        index + 1,
-                                        segments.size
-                                    )
+                                    app.getString(status, index + 1, segments.size)
                                 )
+                            }
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (huggingFaceError: Exception) {
+                            coroutineContext.ensureActive()
+                            showActiveSegment(
+                                segment,
+                                app.getString(
+                                    R.string.status_fallback_public,
+                                    index + 1,
+                                    segments.size
+                                )
+                            )
+                            try {
+                                online.synthesizeFirstAvailable(
+                                    OnlineSpeechClient.PUBLIC_ENDPOINTS,
+                                    parameters
+                                ) { attempt, _ ->
+                                    if (attempt > 1) {
+                                        showActiveSegment(
+                                            segment,
+                                            app.getString(
+                                                R.string.status_retrying_public,
+                                                index + 1,
+                                                segments.size
+                                            )
+                                        )
+                                    }
+                                }
+                            } catch (legacyError: Exception) {
+                                legacyError.addSuppressed(huggingFaceError)
+                                throw legacyError
                             }
                         }
                     }
@@ -601,6 +646,7 @@ class ReaderViewModel(
         offlineJob = null
         onlineJob?.cancel()
         onlineJob = null
+        runCatching { huggingFace.cancelActive() }
         runCatching { online.cancelActive() }
         runCatching { audio.stop() }
         tts.stop()

@@ -36,7 +36,7 @@
     <string name="offline_type">离线音色</string>
     <string name="online_type">在线音色（需联网）</string>
     <string name="system_source">系统 TTS 语音引擎</string>
-    <string name="public_source">公开原神 VITS API</string>
+    <string name="public_source">Hugging Face VITS（旧公开接口备用）</string>
     <string name="custom_source">用户配置的推理服务器</string>
     <string name="language">系统 TTS 语言</string>
     <string name="no_languages">没有可用的离线语言，请安装语音数据</string>
@@ -47,6 +47,7 @@
     <string name="noise">感情变化 noise：%1$.2f</string>
     <string name="length">长度系数 length：%1$.1f（数值越大越慢）</string>
     <string name="format">音频格式：%1$s</string>
+    <string name="hf_format_note">角色主服务固定返回 WAV；此格式选项仅供旧服务器和自建服务器使用。</string>
     <string name="custom_server">自定义在线音色服务器</string>
     <string name="server_hint">http://192.168.1.2:9880/</string>
     <string name="custom_speaker">说话者名称</string>
@@ -67,7 +68,11 @@
     <string name="status_new_document">已新建空白文稿</string>
     <string name="status_next_document">即将播放：%1$s</string>
     <string name="status_requesting">正在请求在线语音（%1$d/%2$d）</string>
-    <string name="status_retrying_public">主服务器无响应，正在尝试备用角色服务器（%1$d/%2$d）</string>
+    <string name="status_hf_connecting">正在连接角色语音服务（%1$d/%2$d）</string>
+    <string name="status_hf_waiting">角色语音服务排队中（%1$d/%2$d）</string>
+    <string name="status_hf_synthesizing">正在合成角色语音（%1$d/%2$d）</string>
+    <string name="status_fallback_public">新角色服务暂时不可用，正在尝试旧服务器（%1$d/%2$d）</string>
+    <string name="status_retrying_public">正在尝试第二个旧角色服务器（%1$d/%2$d）</string>
     <string name="status_online_playing">正在播放在线语音（%1$d/%2$d）</string>
     <string name="error_empty">请先输入文本</string>
     <string name="error_not_ready">系统 TTS 尚未就绪，请稍候或检查语音引擎</string>
@@ -78,7 +83,7 @@
     <string name="error_server_url">请输入有效的 http 或 https 服务器地址</string>
     <string name="error_speaker">请输入自定义说话者名称</string>
     <string name="error_network">无法连接自定义语音服务器，请检查服务器地址和网络</string>
-    <string name="error_public_service">公共角色语音服务器当前不可用（已尝试主、备地址）。你的手机网络可能正常，请稍后重试或切换到系统离线音色</string>
+    <string name="error_public_service">角色语音服务当前不可用（已尝试 Hugging Face 和两个旧地址）。这不一定是手机断网，请稍后重试或切换到系统离线音色</string>
     <string name="error_timeout">在线语音请求超时，请稍后重试</string>
     <string name="error_http">在线语音服务返回 HTTP %1$d</string>
     <string name="error_non_audio">服务器没有返回有效的 MP3/WAV 音频</string>
@@ -89,10 +94,10 @@
     <string name="install_data">安装语音数据</string>
     <string name="install_data_failed">无法打开语音数据安装页，请在系统设置中搜索“文字转语音”</string>
     <string name="agreement">用户协议与版权</string>
-    <string name="agreement_content">本应用提供系统离线朗读和可选的在线语音合成。选择在线音色后，输入的文字将发送至所选服务器；公开接口使用 HTTP，传输内容不加密，请勿输入敏感信息。\n\n神里绫华、优菈、可莉等角色的音频版权属于米哈游科技（上海）有限公司。公开 API 和相关模型仅供二次创作，禁止商业用途，禁止二次配布。用户对使用他人音色产生的版权问题自行负责。应用不内置任何未经授权的角色音频文件或模型。\n\n公开接口是第三方服务，随时可能变更、中断或关闭；本应用与米哈游及接口提供者均无官方关联。</string>
+    <string name="agreement_content">本应用提供系统离线朗读和可选的在线语音合成。选择预设角色音色后，输入文字会优先通过 HTTPS 发送到第三方 Hugging Face Space；失败时可能发送到旧的 HTTP 公开接口。自定义服务器由用户自行配置。请勿提交敏感文本。\n\n神里绫华、优菈、可莉等角色的音频版权属于米哈游科技（上海）有限公司。公开 API 和相关模型仅供二次创作，禁止商业用途，禁止二次配布。用户对使用他人音色产生的版权问题自行负责。应用不内置任何未经授权的角色音频文件或模型。\n\n所有在线接口均由第三方维护，随时可能排队、休眠、变更、中断或关闭；本应用与米哈游、Hugging Face 及模型或接口提供者均无官方关联。</string>
     <string name="close">关闭</string>
     <string name="voice_details">%1$s · %2$s · 来源：%3$s</string>
     <string name="voice_selected">已选：%1$s</string>
-    <string name="network_warning">在线合成会把文字发送到所选服务器。角色公共服务器停机时，即使手机已联网也无法合成；应用会自动尝试主、备地址。</string>
+    <string name="network_warning">在线合成会把文字发送到第三方服务器。预设角色会优先使用 Hugging Face VITS，失败后自动尝试两个旧地址；服务休眠、排队或停机时，即使手机已联网也可能无法合成。</string>
     <string name="switch_offline">切换到系统离线音色</string>
 </resources>
