@@ -163,7 +163,7 @@ GitHub Actions 会使用 JDK 17、API 37 和 Android 35 x86_64 模拟器执行�
 - 每个中文句号、问号和感叹号都形成独立播放段及准确文本范围；
 - 两段 16-bit PCM WAV 的真实合并、350 毫秒句间静音、原始 WAV 文件头检查、Jump3r MP3 编码和 MP3 文件头检查。
 
-**3.2 构建状态：待本次构建验证。** 上一版 3.1 的 [构建与 Android 35 模拟器测试](https://github.com/15978440429a-sketch/-/actions/runs/38523347982) 已成功；新版构建完成后更新本节。
+**3.2 构建状态：已通过。** 2026-10-14 的 [GitHub Actions 构建与 Android 35 模拟器测试](https://github.com/15978440429a-sketch/-/actions/runs/38533768927) 全部成功，对应构建提交 `93a4650ee56064a8d823df7181fe83e389d8a6e8`。原生参数请求、32 kHz WAV 的 MediaPlayer 实际解码播放、JSON 错误、自建服务器设置恢复及 WAV/MP3 导出均已通过自动验收；另有 3 项无 GPU 的服务适配测试通过。APK 大小为 19,817,033 字节，SHA-256：`5e46aa0b5ca40393d2364d6b3e2d3ebfc7554ec5086220c043833ae450fbaef8`。这些测试使用模拟接口和真实 PCM 音频，不代表已经试听用户电脑上的神里绫华 v2 模型。
 
 ## 版权与使用条件
 
