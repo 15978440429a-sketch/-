@@ -68,6 +68,9 @@ class ReaderViewModel(
     private var playbackGeneration = 0L
     private var activePlaybackToken = -1L
     private var activeSegments: List<TextSegmenter.Segment> = emptyList()
+    private var activeSegmentIndex = 0
+    private var ttsSegmentOffset = 0
+    private var offlineTtsActive = false
     private var completedPlaysForItem = 0
     private var editVersion = saved.get<Long>("storage_revision") ?: 0L
     private var storageLoaded = false
@@ -395,11 +398,19 @@ class ReaderViewModel(
     }
 
     fun setPlaybackMode(mode: PlaybackMode) {
-        stop(showStatus = false)
         bumpRevision()
         saved["playback_mode"] = mode.storedValue
         _uiState.value = _uiState.value.copy(playbackMode = mode)
         scheduleDraftSave(0)
+    }
+
+    fun cyclePlaybackMode() {
+        val next = when (_uiState.value.playbackMode) {
+            PlaybackMode.SEQUENTIAL -> PlaybackMode.REPEAT_ONE
+            PlaybackMode.REPEAT_ONE -> PlaybackMode.SHUFFLE
+            PlaybackMode.SHUFFLE -> PlaybackMode.SEQUENTIAL
+        }
+        setPlaybackMode(next)
     }
 
     fun setPlaysPerItem(value: Int) {
@@ -556,8 +567,45 @@ class ReaderViewModel(
         }
         stop(showStatus = false)
         completedPlaysForItem = 0
-        _uiState.value = _uiState.value.copy(currentPlayNumber = 1)
+        _uiState.value = _uiState.value.copy(currentPlayNumber = 1, paused = false)
         startCurrentPlayback(playbackGeneration)
+    }
+
+    fun playSavedText(id: Long) {
+        val document = _uiState.value.savedTexts.firstOrNull { it.id == id } ?: return
+        stop(showStatus = false)
+        loadDocumentIntoEditor(document, app.getString(R.string.status_next_document, document.title))
+        completedPlaysForItem = 0
+        _uiState.value = _uiState.value.copy(currentPlayNumber = 1, paused = false)
+        startCurrentPlayback(playbackGeneration)
+    }
+
+    fun togglePlayback() {
+        when {
+            _uiState.value.paused -> resumePlayback()
+            _uiState.value.busy -> pausePlayback()
+            else -> play()
+        }
+    }
+
+    fun pausePlayback() {
+        val state = _uiState.value
+        if (!state.busy || state.paused) return
+        _uiState.value = state.copy(
+            paused = true,
+            status = app.getString(R.string.status_paused)
+        )
+        if (offlineTtsActive) tts.stop() else audio.pause()
+    }
+
+    fun resumePlayback() {
+        val state = _uiState.value
+        if (!state.paused || activePlaybackToken < 0) return
+        _uiState.value = state.copy(
+            paused = false,
+            status = app.getString(R.string.status_reading)
+        )
+        if (offlineTtsActive) resumeOfflineFromCurrentSegment() else audio.resume()
     }
 
     private fun startCurrentPlayback(token: Long) {
@@ -584,9 +632,12 @@ class ReaderViewModel(
     }
 
     private fun playDownloadedAudio(state: UiState, file: File, token: Long) {
+        offlineTtsActive = false
+        activeSegmentIndex = 0
         activeSegments = listOf(TextSegmenter.Segment(state.text, 0, state.text.length))
         _uiState.value = _uiState.value.copy(
             busy = true,
+            paused = false,
             status = app.getString(R.string.status_offline_audio_playing),
             highlightStart = 0,
             highlightEnd = state.text.length
@@ -594,7 +645,7 @@ class ReaderViewModel(
         onlineJob = viewModelScope.launch {
             val job = currentCoroutineContext()[Job]
             try {
-                audio.play(file)
+                audio.play(file, startPaused = _uiState.value.paused)
             } catch (_: CancellationException) {
                 return@launch
             } catch (error: Exception) {
@@ -619,8 +670,11 @@ class ReaderViewModel(
         }
         val customServer = state.serverUrl.trim()
         val speaker = option.onlineSpeaker ?: state.speaker.trim()
+        offlineTtsActive = false
+        activeSegmentIndex = 0
         _uiState.value = _uiState.value.copy(
             busy = true,
+            paused = false,
             status = app.getString(R.string.status_preparing)
         )
         onlineJob = viewModelScope.launch {
@@ -639,6 +693,7 @@ class ReaderViewModel(
                 activeSegments = segments
                 segments.forEachIndexed { index, segment ->
                     if (activePlaybackToken != token) return@launch
+                    awaitPlaybackResumed(token)
                     showActiveSegment(
                         segment,
                         app.getString(R.string.status_requesting, index + 1, segments.size)
@@ -656,6 +711,7 @@ class ReaderViewModel(
                         online.synthesize(customServer, parameters)
                     }
                     try {
+                        awaitPlaybackResumed(token)
                         showActiveSegment(
                             segment,
                             app.getString(
@@ -664,7 +720,7 @@ class ReaderViewModel(
                                 segments.size
                             )
                         )
-                        audio.play(file)
+                        audio.play(file, startPaused = _uiState.value.paused)
                     } finally {
                         withContext(NonCancellable + Dispatchers.IO) { file.delete() }
                     }
@@ -744,6 +800,7 @@ class ReaderViewModel(
         }
         _uiState.value = _uiState.value.copy(
             busy = true,
+            paused = false,
             status = app.getString(R.string.status_preparing)
         )
         offlineJob = viewModelScope.launch {
@@ -757,6 +814,10 @@ class ReaderViewModel(
                 }
                 if (activePlaybackToken != token) return@launch
                 activeSegments = segments
+                activeSegmentIndex = 0
+                ttsSegmentOffset = 0
+                offlineTtsActive = true
+                if (_uiState.value.paused) return@launch
                 val error = tts.speak(
                     segments.map { it.text },
                     state.languageTag,
@@ -775,7 +836,31 @@ class ReaderViewModel(
         }
     }
 
+    private fun resumeOfflineFromCurrentSegment() {
+        val state = _uiState.value
+        if (!offlineTtsActive || activeSegments.isEmpty()) return
+        val from = activeSegmentIndex.coerceIn(0, activeSegments.lastIndex)
+        val option = state.voices.firstOrNull { it.id == state.voiceId }
+        ttsSegmentOffset = from
+        val error = tts.speak(
+            activeSegments.drop(from).map { it.text },
+            state.languageTag,
+            option?.systemVoiceName,
+            state.rate,
+            state.pitch
+        )
+        if (error != null) showError(error)
+    }
+
+    private suspend fun awaitPlaybackResumed(token: Long) {
+        while (_uiState.value.paused && activePlaybackToken == token) delay(80)
+        currentCoroutineContext().ensureActive()
+    }
+
     private fun showActiveSegment(segment: TextSegmenter.Segment, status: String) {
+        activeSegmentIndex = activeSegments.indexOfFirst {
+            it.start == segment.start && it.endExclusive == segment.endExclusive
+        }.coerceAtLeast(0)
         _uiState.value = _uiState.value.copy(
             busy = true,
             status = status,
@@ -788,10 +873,12 @@ class ReaderViewModel(
         if (token < 0 || activePlaybackToken != token) return
         activePlaybackToken = -1L
         activeSegments = emptyList()
+        offlineTtsActive = false
         completedPlaysForItem++
         val state = _uiState.value
         _uiState.value = state.copy(
             busy = false,
+            paused = false,
             status = app.getString(R.string.status_finished),
             highlightStart = -1,
             highlightEnd = -1
@@ -1133,6 +1220,9 @@ class ReaderViewModel(
         playbackGeneration++
         activePlaybackToken = -1L
         activeSegments = emptyList()
+        activeSegmentIndex = 0
+        ttsSegmentOffset = 0
+        offlineTtsActive = false
         completedPlaysForItem = 0
         advanceJob?.cancel()
         advanceJob = null
@@ -1148,6 +1238,7 @@ class ReaderViewModel(
         tts.stop()
         _uiState.value = _uiState.value.copy(
             busy = false,
+            paused = false,
             downloadBusy = false,
             currentPlayNumber = 1,
             highlightStart = -1,
@@ -1160,8 +1251,10 @@ class ReaderViewModel(
     private fun showError(message: String) {
         activePlaybackToken = -1L
         activeSegments = emptyList()
+        offlineTtsActive = false
         _uiState.value = _uiState.value.copy(
             busy = false,
+            paused = false,
             downloadBusy = false,
             highlightStart = -1,
             highlightEnd = -1,
@@ -1220,9 +1313,12 @@ class ReaderViewModel(
     }
 
     override fun onSpeaking(segmentIndex: Int) {
-        val segment = activeSegments.getOrNull(segmentIndex)
+        val absoluteIndex = (ttsSegmentOffset + segmentIndex).coerceAtLeast(0)
+        activeSegmentIndex = absoluteIndex
+        val segment = activeSegments.getOrNull(absoluteIndex)
         _uiState.value = _uiState.value.copy(
             status = app.getString(R.string.status_reading),
+            paused = false,
             highlightStart = segment?.start ?: -1,
             highlightEnd = segment?.endExclusive ?: -1
         )

@@ -2,7 +2,6 @@ package com.example.texttospeech
 
 import android.content.ActivityNotFoundException
 import android.content.Intent
-import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.speech.tts.TextToSpeech
@@ -12,23 +11,48 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Description
+import androidx.compose.material.icons.rounded.EditNote
+import androidx.compose.material.icons.rounded.GraphicEq
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.LibraryMusic
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.QueueMusic
+import androidx.compose.material.icons.rounded.Repeat
+import androidx.compose.material.icons.rounded.RepeatOne
+import androidx.compose.material.icons.rounded.Save
+import androidx.compose.material.icons.rounded.SettingsVoice
+import androidx.compose.material.icons.rounded.Shuffle
+import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -36,35 +60,41 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.texttospeech.model.CUSTOM
@@ -74,6 +104,33 @@ import com.example.texttospeech.model.SYSTEM_DEFAULT
 import com.example.texttospeech.model.SavedText
 import com.example.texttospeech.model.UiState
 import com.example.texttospeech.model.VoiceOption
+import com.example.texttospeech.util.TextSegmenter
+
+private val LightPalette = lightColorScheme(
+    primary = Color(0xFF77613A),
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFF3E3BA),
+    onPrimaryContainer = Color(0xFF2A210E),
+    secondary = Color(0xFF566744),
+    secondaryContainer = Color(0xFFD9E8C5),
+    tertiary = Color(0xFF8A4F45),
+    background = Color(0xFFFBF8F1),
+    surface = Color(0xFFFFFBF3),
+    surfaceVariant = Color(0xFFEDE8DD)
+)
+
+private val DarkPalette = darkColorScheme(
+    primary = Color(0xFFE0C58B),
+    onPrimary = Color(0xFF3F3010),
+    primaryContainer = Color(0xFF574619),
+    onPrimaryContainer = Color(0xFFFBE7AE),
+    secondary = Color(0xFFBECEA8),
+    secondaryContainer = Color(0xFF3F4F31),
+    tertiary = Color(0xFFFFB4A8),
+    background = Color(0xFF171612),
+    surface = Color(0xFF1E1D18),
+    surfaceVariant = Color(0xFF34322B)
+)
 
 class MainActivity : ComponentActivity() {
     private val reader: ReaderViewModel by viewModels()
@@ -96,17 +153,15 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            val context = LocalContext.current
-            val dark = isSystemInDarkTheme()
-            val colors = when {
-                Build.VERSION.SDK_INT >= 31 && dark -> dynamicDarkColorScheme(context)
-                Build.VERSION.SDK_INT >= 31 -> dynamicLightColorScheme(context)
-                dark -> darkColorScheme()
-                else -> lightColorScheme()
-            }
-            MaterialTheme(colorScheme = colors) {
+            MaterialTheme(
+                colorScheme = if (androidx.compose.foundation.isSystemInDarkTheme()) {
+                    DarkPalette
+                } else {
+                    LightPalette
+                }
+            ) {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    ReaderScreen(
+                    ReaderApp(
                         reader = reader,
                         installVoiceData = ::openVoiceDataSettings,
                         exportMp3 = { exportDownloadedAudio("mp3") },
@@ -158,164 +213,100 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private enum class AppPage { PLAYER, EDITOR }
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ReaderScreen(
+private fun ReaderApp(
     reader: ReaderViewModel,
     installVoiceData: () -> Unit,
     exportMp3: () -> Unit,
     exportWav: () -> Unit
 ) {
     val ui by reader.uiState.collectAsStateWithLifecycle()
-    var voiceDialog by remember { mutableStateOf(false) }
-    var agreementDialog by remember { mutableStateOf(false) }
-    var languageMenu by remember { mutableStateOf(false) }
-    var saveNameDialog by remember { mutableStateOf(false) }
-    var saveName by remember { mutableStateOf("") }
-    var playlistNameDialog by remember { mutableStateOf(false) }
-    var playlistName by remember { mutableStateOf("") }
-    var deletePlaylistDialog by remember { mutableStateOf(false) }
-    var pendingDeleteId by remember { mutableStateOf<Long?>(null) }
-    val selectedVoice = ui.voices.firstOrNull { it.id == ui.voiceId }
-    val onlineVoice = selectedVoice?.online == true
-    val currentDocument = ui.savedTexts.firstOrNull { it.id == ui.selectedTextId }
+    var pageName by rememberSaveable { mutableStateOf(AppPage.PLAYER.name) }
+    val page = AppPage.valueOf(pageName)
+    var settingsOpen by rememberSaveable { mutableStateOf(false) }
+    var queueOpen by rememberSaveable { mutableStateOf(false) }
+    var voiceDialog by rememberSaveable { mutableStateOf(false) }
+    var agreementDialog by rememberSaveable { mutableStateOf(false) }
+    var saveNameDialog by rememberSaveable { mutableStateOf(false) }
+    var saveName by rememberSaveable { mutableStateOf("") }
+    var playlistNameDialog by rememberSaveable { mutableStateOf(false) }
+    var playlistName by rememberSaveable { mutableStateOf("") }
+    var deletePlaylistDialog by rememberSaveable { mutableStateOf(false) }
+    var pendingDeleteId by rememberSaveable { mutableStateOf<Long?>(null) }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .safeDrawingPadding()
-            .imePadding()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        Text(
-            stringResource(R.string.app_name),
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold
-        )
-        OutlinedTextField(
-            value = ui.text,
-            onValueChange = reader::updateText,
-            modifier = Modifier.fillMaxWidth().heightIn(min = 220.dp).testTag("text_input"),
-            label = { Text(stringResource(R.string.input_label)) },
-            placeholder = { Text(stringResource(R.string.input_hint)) },
-            minLines = 7
-        )
-        Text(
-            stringResource(R.string.character_count, ui.text.codePointCount(0, ui.text.length)),
-            style = MaterialTheme.typography.labelMedium,
-            modifier = Modifier.align(Alignment.End)
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(
-                onClick = reader::play,
-                enabled = ui.text.isNotBlank() && !ui.downloadBusy,
-                modifier = Modifier.weight(1f).testTag("play_button")
-            ) {
-                Text(stringResource(R.string.play))
-            }
-            OutlinedButton(
-                onClick = { reader.stop() },
-                enabled = ui.busy || ui.downloadBusy,
-                modifier = Modifier.weight(1f).testTag("stop_button")
-            ) {
-                Text(stringResource(R.string.stop))
-            }
-            OutlinedButton(onClick = reader::clearText, enabled = ui.text.isNotEmpty()) {
-                Text(stringResource(R.string.clear))
-            }
-        }
-
-        StatusCard(ui, reader, installVoiceData, onlineVoice)
-        if (ui.busy && ui.highlightStart >= 0 && ui.highlightEnd > ui.highlightStart) {
-            NowReadingCard(ui)
-        }
-
-        PlaybackModeSection(ui, reader)
-        TimerSection(ui, reader)
-        PlaylistSection(
-            ui = ui,
-            onCreate = {
-                playlistName = ""
-                playlistNameDialog = true
-            },
-            onDelete = { deletePlaylistDialog = true },
-            onSelect = reader::selectPlaylist
-        )
-        TextLibrarySection(
-            ui = ui,
-            reader = reader,
-            onSave = {
-                saveName = ""
-                saveNameDialog = true
-            },
-            onDelete = { pendingDeleteId = it }
-        )
-
-        Text(stringResource(R.string.voice_settings), style = MaterialTheme.typography.titleLarge)
-        OutlinedButton(
-            onClick = { voiceDialog = true },
-            modifier = Modifier.fillMaxWidth().testTag("voice_selector")
-        ) {
-            Text(
-                stringResource(
-                    R.string.voice_selected,
-                    selectedVoice?.name ?: stringResource(R.string.offline_default)
-                )
-            )
-        }
-        if (selectedVoice != null) VoiceDetail(selectedVoice)
-        if (onlineVoice) {
-            Text(
-                stringResource(R.string.network_warning),
-                color = MaterialTheme.colorScheme.secondary,
-                style = MaterialTheme.typography.bodySmall
-            )
-            OfflineDownloadSection(
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        bottomBar = {
+            PlayerControlBar(
                 ui = ui,
-                currentDocument = currentDocument,
-                reader = reader,
-                exportMp3 = exportMp3,
-                exportWav = exportWav
+                page = page,
+                onSettings = { settingsOpen = true },
+                onTogglePage = {
+                    pageName = if (page == AppPage.PLAYER) {
+                        AppPage.EDITOR.name
+                    } else {
+                        AppPage.PLAYER.name
+                    }
+                },
+                onPlayPause = reader::togglePlayback,
+                onCycleMode = reader::cyclePlaybackMode,
+                onQueue = { queueOpen = true }
             )
         }
-
-        Text(stringResource(R.string.language), style = MaterialTheme.typography.titleMedium)
-        Box {
-            OutlinedButton(
-                onClick = { languageMenu = true },
-                enabled = ui.languages.isNotEmpty()
-            ) {
-                Text(ui.languages.firstOrNull { it.tag == ui.languageTag }?.label ?: ui.languageTag)
-            }
-            DropdownMenu(expanded = languageMenu, onDismissRequest = { languageMenu = false }) {
-                ui.languages.forEach { language ->
-                    DropdownMenuItem(
-                        text = { Text(language.label) },
-                        onClick = {
-                            reader.selectLanguage(language.tag)
-                            languageMenu = false
-                        }
-                    )
-                }
-            }
-        }
-        if (ui.languages.isEmpty()) {
-            Text(stringResource(R.string.no_languages), color = MaterialTheme.colorScheme.error)
-        }
-        Text(stringResource(R.string.speech_rate, ui.rate))
-        Slider(value = ui.rate, onValueChange = reader::setRate, valueRange = 0.5f..2f, steps = 14)
-        Text(stringResource(R.string.pitch, ui.pitch))
-        Slider(value = ui.pitch, onValueChange = reader::setPitch, valueRange = 0.5f..2f, steps = 14)
-        Text(stringResource(R.string.settings_next_play), style = MaterialTheme.typography.bodySmall)
-
-        if (onlineVoice) OnlineSettings(ui, reader)
-        Spacer(Modifier.width(4.dp))
-        TextButton(onClick = { agreementDialog = true }) {
-            Text(stringResource(R.string.agreement))
+    ) { innerPadding ->
+        when (page) {
+            AppPage.PLAYER -> PlayerScreen(
+                ui = ui,
+                reader = reader,
+                modifier = Modifier.padding(innerPadding),
+                onOpenEditor = { pageName = AppPage.EDITOR.name }
+            )
+            AppPage.EDITOR -> EditorScreen(
+                ui = ui,
+                reader = reader,
+                modifier = Modifier.padding(innerPadding),
+                exportMp3 = exportMp3,
+                exportWav = exportWav,
+                onSave = {
+                    saveName = ""
+                    saveNameDialog = true
+                },
+                onCreatePlaylist = {
+                    playlistName = ""
+                    playlistNameDialog = true
+                },
+                onDeletePlaylist = { deletePlaylistDialog = true },
+                onDeleteDocument = { pendingDeleteId = it },
+                onReturnToPlayer = { pageName = AppPage.PLAYER.name }
+            )
         }
     }
 
+    if (settingsOpen) {
+        AudioSettingsSheet(
+            ui = ui,
+            reader = reader,
+            installVoiceData = installVoiceData,
+            onPickVoice = { voiceDialog = true },
+            onAgreement = { agreementDialog = true },
+            onDismiss = { settingsOpen = false }
+        )
+    }
+    if (queueOpen) {
+        PlaybackQueueSheet(
+            ui = ui,
+            onPlay = { id ->
+                reader.playSavedText(id)
+                pageName = AppPage.PLAYER.name
+                queueOpen = false
+            },
+            onCycleMode = reader::cyclePlaybackMode,
+            onDismiss = { queueOpen = false }
+        )
+    }
     if (voiceDialog) {
         VoicePickerDialog(
             ui = ui,
@@ -374,23 +365,6 @@ private fun ReaderScreen(
             }
         )
     }
-    if (agreementDialog) {
-        AlertDialog(
-            onDismissRequest = { agreementDialog = false },
-            title = { Text(stringResource(R.string.agreement)) },
-            text = {
-                Text(
-                    stringResource(R.string.agreement_content),
-                    modifier = Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState())
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = { agreementDialog = false }) {
-                    Text(stringResource(R.string.close))
-                }
-            }
-        )
-    }
     pendingDeleteId?.let { id ->
         AlertDialog(
             onDismissRequest = { pendingDeleteId = null },
@@ -409,145 +383,586 @@ private fun ReaderScreen(
             }
         )
     }
+    if (agreementDialog) {
+        AgreementDialog(onDismiss = { agreementDialog = false })
+    }
 }
 
 @Composable
-private fun NameInputDialog(
-    title: String,
-    value: String,
-    label: String,
-    confirmLabel: String,
-    fieldTestTag: String,
-    onValueChange: (String) -> Unit,
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
-            OutlinedTextField(
-                value = value,
-                onValueChange = onValueChange,
-                label = { Text(label) },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth().testTag(fieldTestTag)
-            )
-        },
-        confirmButton = {
-            TextButton(onClick = onConfirm, enabled = value.isNotBlank()) { Text(confirmLabel) }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
-        }
-    )
-}
-
-@Composable
-private fun StatusCard(
+private fun PlayerScreen(
     ui: UiState,
     reader: ReaderViewModel,
-    installVoiceData: () -> Unit,
-    online: Boolean
+    modifier: Modifier = Modifier,
+    onOpenEditor: () -> Unit
 ) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(stringResource(R.string.status_title), style = MaterialTheme.typography.titleMedium)
-            if (ui.downloadBusy) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    CircularProgressIndicator(modifier = Modifier.width(22.dp))
-                    Text(ui.status, style = MaterialTheme.typography.bodyLarge)
-                }
-            } else {
-                Text(ui.status, style = MaterialTheme.typography.bodyLarge)
-            }
-            ui.storageError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            if (ui.ttsReady && !ui.chineseAvailable) {
-                OutlinedButton(onClick = installVoiceData) {
-                    Text(stringResource(R.string.install_data))
-                }
-            }
-            if (online && ui.ttsReady && ui.languages.isNotEmpty()) {
-                TextButton(onClick = { reader.selectVoice(SYSTEM_DEFAULT) }) {
-                    Text(stringResource(R.string.switch_offline))
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun NowReadingCard(ui: UiState) {
-    val text = ui.text
-    val safeStart = ui.highlightStart.coerceIn(0, text.length)
-    val safeEnd = ui.highlightEnd.coerceIn(safeStart, text.length)
-    val contextStart = (safeStart - 36).coerceAtLeast(0)
-    val contextEnd = (safeEnd + 36).coerceAtMost(text.length)
-    val highlighted = buildAnnotatedString {
-        if (contextStart > 0) append("…")
-        append(text.substring(contextStart, safeStart))
-        withStyle(
-            SpanStyle(
-                background = MaterialTheme.colorScheme.tertiaryContainer,
-                color = MaterialTheme.colorScheme.onTertiaryContainer,
-                fontWeight = FontWeight.Bold
-            )
-        ) {
-            append(text.substring(safeStart, safeEnd))
-        }
-        append(text.substring(safeEnd, contextEnd))
-        if (contextEnd < text.length) append("…")
-    }
-    val title = ui.savedTexts.firstOrNull { it.id == ui.selectedTextId }?.title
-        ?: stringResource(R.string.unsaved_draft)
-    Card(
-        modifier = Modifier.fillMaxWidth().testTag("now_reading"),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+    val document = ui.savedTexts.firstOrNull { it.id == ui.selectedTextId }
+    val selectedVoice = ui.voices.firstOrNull { it.id == ui.voiceId }
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            PlaylistSelector(
+                ui = ui,
+                onSelect = reader::selectPlaylist,
+                modifier = Modifier.weight(1f),
+                testTag = "playlist_selector"
+            )
+            if (ui.busy || ui.paused || ui.downloadBusy) {
+                OutlinedButton(
+                    onClick = { reader.stop() },
+                    modifier = Modifier.testTag("stop_button")
+                ) {
+                    Icon(Icons.Rounded.Stop, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text(stringResource(R.string.stop))
+                }
+            }
+        }
+
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
             Text(
-                stringResource(R.string.now_reading),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
+                document?.title ?: stringResource(R.string.unsaved_draft),
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
             Text(
-                stringResource(
-                    R.string.reading_title_and_count,
-                    title,
-                    ui.currentPlayNumber,
-                    ui.playsPerItem
-                ),
-                style = MaterialTheme.typography.labelLarge
+                selectedVoice?.name ?: stringResource(R.string.offline_default),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary
             )
-            Text(highlighted, maxLines = 8, overflow = TextOverflow.Ellipsis)
+        }
+
+        SegmentedReadingSurface(
+            ui = ui,
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            onOpenEditor = onOpenEditor
+        )
+
+        StatusStrip(ui)
+    }
+}
+
+@Composable
+private fun SegmentedReadingSurface(
+    ui: UiState,
+    modifier: Modifier,
+    onOpenEditor: () -> Unit
+) {
+    val segments = remember(ui.text) {
+        if (ui.text.isBlank()) emptyList() else TextSegmenter.splitWithRanges(ui.text, 140)
+    }
+    val activeIndex = remember(segments, ui.highlightStart, ui.highlightEnd) {
+        if (ui.highlightStart < 0) -1 else segments.indexOfFirst {
+            ui.highlightStart < it.endExclusive && ui.highlightEnd > it.start
+        }
+    }
+    val listState = rememberLazyListState()
+    LaunchedEffect(activeIndex) {
+        if (activeIndex >= 0) {
+            listState.animateScrollToItem((activeIndex - 1).coerceAtLeast(0))
+        }
+    }
+
+    Card(
+        modifier = modifier.testTag("segmented_text"),
+        shape = RoundedCornerShape(28.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
+        )
+    ) {
+        if (segments.isEmpty()) {
+            Column(
+                modifier = Modifier.fillMaxSize().clickable(onClick = onOpenEditor).padding(28.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Icon(
+                    Icons.Rounded.Description,
+                    contentDescription = null,
+                    modifier = Modifier.size(52.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    stringResource(R.string.empty_player_text),
+                    style = MaterialTheme.typography.titleLarge,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    stringResource(R.string.empty_player_help),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+            }
+        } else {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(horizontal = 18.dp, vertical = 70.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                itemsIndexed(
+                    items = segments,
+                    key = { _, segment -> "${segment.start}-${segment.endExclusive}" }
+                ) { index, segment ->
+                    val active = index == activeIndex
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(18.dp),
+                        color = if (active) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            Color.Transparent
+                        }
+                    ) {
+                        Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+                            if (active) {
+                                Text(
+                                    stringResource(
+                                        if (ui.paused) R.string.current_segment_paused
+                                        else R.string.current_segment
+                                    ),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(Modifier.height(4.dp))
+                            }
+                            Text(
+                                segment.text,
+                                style = if (active) {
+                                    MaterialTheme.typography.headlineSmall
+                                } else {
+                                    MaterialTheme.typography.titleLarge
+                                },
+                                color = if (active) {
+                                    MaterialTheme.colorScheme.onPrimaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                                lineHeight = MaterialTheme.typography.headlineSmall.lineHeight
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun PlaybackModeSection(ui: UiState, reader: ReaderViewModel) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-            Text(stringResource(R.string.playback_mode), style = MaterialTheme.typography.titleLarge)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                PlaybackMode.entries.forEach { mode ->
-                    val label = when (mode) {
-                        PlaybackMode.SEQUENTIAL -> stringResource(R.string.mode_sequential)
-                        PlaybackMode.REPEAT_ONE -> stringResource(R.string.mode_repeat_one)
-                        PlaybackMode.SHUFFLE -> stringResource(R.string.mode_shuffle)
-                    }
-                    FilterChip(
-                        selected = ui.playbackMode == mode,
-                        onClick = { reader.setPlaybackMode(mode) },
-                        label = { Text(label, maxLines = 1) },
-                        modifier = Modifier.weight(1f).testTag("mode_${mode.storedValue}")
+private fun StatusStrip(ui: UiState) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surface
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            if (ui.downloadBusy) {
+                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+            } else {
+                Icon(
+                    if (ui.busy && !ui.paused) Icons.Rounded.GraphicEq else Icons.Rounded.Description,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+            Column(Modifier.weight(1f)) {
+                Text(ui.status, style = MaterialTheme.typography.bodyMedium, maxLines = 2)
+                if (ui.busy || ui.paused) {
+                    Text(
+                        stringResource(
+                            R.string.play_count_compact,
+                            ui.currentPlayNumber,
+                            ui.playsPerItem
+                        ),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                }
+                ui.storageError?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlayerControlBar(
+    ui: UiState,
+    page: AppPage,
+    onSettings: () -> Unit,
+    onTogglePage: () -> Unit,
+    onPlayPause: () -> Unit,
+    onCycleMode: () -> Unit,
+    onQueue: () -> Unit
+) {
+    Surface(
+        tonalElevation = 8.dp,
+        shadowElevation = 12.dp,
+        color = MaterialTheme.colorScheme.surface
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .height(88.dp)
+                .padding(horizontal = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            BottomDockAction(
+                label = stringResource(R.string.quality),
+                icon = Icons.Rounded.SettingsVoice,
+                selected = false,
+                testTag = "quality_settings",
+                onClick = onSettings,
+                modifier = Modifier.weight(1f)
+            )
+            BottomDockAction(
+                label = stringResource(
+                    if (page == AppPage.PLAYER) R.string.documents else R.string.player_page
+                ),
+                icon = if (page == AppPage.PLAYER) Icons.Rounded.EditNote else Icons.Rounded.ArrowBack,
+                selected = page == AppPage.EDITOR,
+                testTag = "editor_tab",
+                onClick = onTogglePage,
+                modifier = Modifier.weight(1f)
+            )
+            Column(
+                modifier = Modifier.weight(1.16f),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                FilledIconButton(
+                    onClick = onPlayPause,
+                    enabled = ui.text.isNotBlank() && !ui.downloadBusy,
+                    modifier = Modifier.size(58.dp).testTag("play_pause_button"),
+                    shape = CircleShape
+                ) {
+                    Icon(
+                        if (ui.busy && !ui.paused) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                        contentDescription = stringResource(
+                            if (ui.busy && !ui.paused) R.string.pause else R.string.play
+                        ),
+                        modifier = Modifier.size(34.dp)
+                    )
+                }
+                Text(
+                    stringResource(if (ui.busy && !ui.paused) R.string.pause else R.string.play),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+            BottomDockAction(
+                label = playbackModeShortLabel(ui.playbackMode),
+                icon = playbackModeIcon(ui.playbackMode),
+                selected = false,
+                testTag = "mode_cycle",
+                onClick = onCycleMode,
+                modifier = Modifier.weight(1f)
+            )
+            BottomDockAction(
+                label = stringResource(R.string.queue),
+                icon = Icons.Rounded.QueueMusic,
+                selected = false,
+                testTag = "queue_button",
+                onClick = onQueue,
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun BottomDockAction(
+    label: String,
+    icon: ImageVector,
+    selected: Boolean,
+    testTag: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .height(72.dp)
+            .clickable(onClick = onClick)
+            .padding(vertical = 6.dp)
+            .testTag(testTag),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            icon,
+            contentDescription = label,
+            modifier = Modifier.size(27.dp),
+            tint = if (selected) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = if (selected) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1
+        )
+    }
+}
+
+private fun playbackModeIcon(mode: PlaybackMode): ImageVector = when (mode) {
+    PlaybackMode.SEQUENTIAL -> Icons.Rounded.Repeat
+    PlaybackMode.REPEAT_ONE -> Icons.Rounded.RepeatOne
+    PlaybackMode.SHUFFLE -> Icons.Rounded.Shuffle
+}
+
+@Composable
+private fun playbackModeShortLabel(mode: PlaybackMode): String = when (mode) {
+    PlaybackMode.SEQUENTIAL -> stringResource(R.string.mode_sequential_short)
+    PlaybackMode.REPEAT_ONE -> stringResource(R.string.mode_repeat_one_short)
+    PlaybackMode.SHUFFLE -> stringResource(R.string.mode_shuffle_short)
+}
+
+@Composable
+private fun PlaylistSelector(
+    ui: UiState,
+    onSelect: (Long?) -> Unit,
+    modifier: Modifier = Modifier,
+    testTag: String
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val selected = ui.playlists.firstOrNull { it.id == ui.selectedPlaylistId }
+    Box(modifier) {
+        OutlinedButton(
+            onClick = { expanded = true },
+            modifier = Modifier.fillMaxWidth().testTag(testTag)
+        ) {
+            Icon(Icons.Rounded.LibraryMusic, contentDescription = null)
+            Spacer(Modifier.width(7.dp))
+            Text(
+                selected?.name ?: stringResource(R.string.all_documents),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            Icon(Icons.Rounded.KeyboardArrowDown, contentDescription = null)
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.all_documents)) },
+                onClick = {
+                    onSelect(null)
+                    expanded = false
+                }
+            )
+            ui.playlists.forEach { playlist ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            stringResource(
+                                R.string.playlist_with_count,
+                                playlist.name,
+                                playlist.documentIds.size
+                            )
+                        )
+                    },
+                    onClick = {
+                        onSelect(playlist.id)
+                        expanded = false
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun EditorScreen(
+    ui: UiState,
+    reader: ReaderViewModel,
+    modifier: Modifier,
+    exportMp3: () -> Unit,
+    exportWav: () -> Unit,
+    onSave: () -> Unit,
+    onCreatePlaylist: () -> Unit,
+    onDeletePlaylist: () -> Unit,
+    onDeleteDocument: (Long) -> Unit,
+    onReturnToPlayer: () -> Unit
+) {
+    val selectedVoice = ui.voices.firstOrNull { it.id == ui.voiceId }
+    val currentDocument = ui.savedTexts.firstOrNull { it.id == ui.selectedTextId }
+    val selectedPlaylist = ui.playlists.firstOrNull { it.id == ui.selectedPlaylistId }
+
+    LazyColumn(
+        modifier = modifier.fillMaxSize().statusBarsPadding().imePadding(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        stringResource(R.string.documents_and_playlists),
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        stringResource(R.string.editor_page_help),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                TextButton(onClick = onReturnToPlayer) {
+                    Icon(Icons.Rounded.ArrowBack, contentDescription = null)
+                    Text(stringResource(R.string.player_page))
+                }
+            }
+        }
+        item {
+            Card(shape = RoundedCornerShape(22.dp)) {
+                Column(
+                    Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedTextField(
+                        value = ui.text,
+                        onValueChange = reader::updateText,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 230.dp)
+                            .testTag("text_input"),
+                        label = { Text(stringResource(R.string.input_label)) },
+                        placeholder = { Text(stringResource(R.string.input_hint)) },
+                        minLines = 8
+                    )
+                    Text(
+                        stringResource(
+                            R.string.character_count,
+                            ui.text.codePointCount(0, ui.text.length)
+                        ),
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.align(Alignment.End)
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = onSave,
+                            enabled = ui.text.isNotBlank(),
+                            modifier = Modifier.weight(1f).testTag("save_document")
+                        ) {
+                            Icon(Icons.Rounded.Save, contentDescription = null)
+                            Spacer(Modifier.width(5.dp))
+                            Text(stringResource(R.string.save_text))
+                        }
+                        OutlinedButton(onClick = reader::newText, modifier = Modifier.weight(1f)) {
+                            Text(stringResource(R.string.new_text))
+                        }
+                        OutlinedButton(onClick = reader::clearText, enabled = ui.text.isNotEmpty()) {
+                            Text(stringResource(R.string.clear))
+                        }
+                    }
+                    Text(
+                        stringResource(R.string.draft_autosave),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+        item {
+            PlaylistEditorCard(
+                ui = ui,
+                reader = reader,
+                selected = selectedPlaylist,
+                onCreate = onCreatePlaylist,
+                onDelete = onDeletePlaylist
+            )
+        }
+        item { TimerCard(ui, reader) }
+        if (selectedVoice?.online == true) {
+            item {
+                OfflineDownloadCard(
+                    ui = ui,
+                    currentDocument = currentDocument,
+                    reader = reader,
+                    exportMp3 = exportMp3,
+                    exportWav = exportWav
+                )
+            }
+        }
+        item {
+            Text(
+                stringResource(R.string.text_library),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
+            if (ui.savedTexts.isEmpty()) {
+                Text(
+                    stringResource(R.string.no_saved_texts),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        items(ui.savedTexts, key = SavedText::id) { document ->
+            SavedDocumentCard(
+                document = document,
+                selected = ui.selectedTextId == document.id,
+                playing = (ui.busy || ui.paused) && ui.selectedTextId == document.id,
+                playlist = selectedPlaylist,
+                onOpen = { reader.loadSavedText(document.id) },
+                onPlay = {
+                    reader.playSavedText(document.id)
+                    onReturnToPlayer()
+                },
+                onTogglePlaylist = { reader.toggleDocumentInSelectedPlaylist(document.id) },
+                onDelete = { onDeleteDocument(document.id) }
+            )
+        }
+        item { Spacer(Modifier.height(8.dp)) }
+    }
+}
+
+@Composable
+private fun PlaylistEditorCard(
+    ui: UiState,
+    reader: ReaderViewModel,
+    selected: Playlist?,
+    onCreate: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Card(shape = RoundedCornerShape(22.dp)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(stringResource(R.string.playlist_edit), style = MaterialTheme.typography.titleLarge)
+            PlaylistSelector(
+                ui = ui,
+                onSelect = reader::selectPlaylist,
+                modifier = Modifier.fillMaxWidth(),
+                testTag = "editor_playlist_selector"
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onCreate, modifier = Modifier.weight(1f)) {
+                    Text(stringResource(R.string.create_playlist))
+                }
+                OutlinedButton(
+                    onClick = onDelete,
+                    enabled = selected != null,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(stringResource(R.string.delete_playlist))
                 }
             }
             HorizontalDivider()
@@ -556,8 +971,8 @@ private fun PlaybackModeSection(ui: UiState, reader: ReaderViewModel) {
                 fontWeight = FontWeight.SemiBold
             )
             Row(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 OutlinedButton(
                     onClick = { reader.setPlaysPerItem(ui.playsPerItem - 1) },
@@ -575,8 +990,8 @@ private fun PlaybackModeSection(ui: UiState, reader: ReaderViewModel) {
 }
 
 @Composable
-private fun TimerSection(ui: UiState, reader: ReaderViewModel) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+private fun TimerCard(ui: UiState, reader: ReaderViewModel) {
+    Card(shape = RoundedCornerShape(22.dp)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
             Text(stringResource(R.string.timer_title), style = MaterialTheme.typography.titleLarge)
             if (ui.scheduledPlaybackAt == null) {
@@ -629,136 +1044,27 @@ private fun formatDuration(seconds: Long): String {
 }
 
 @Composable
-private fun PlaylistSection(
-    ui: UiState,
-    onCreate: () -> Unit,
-    onDelete: () -> Unit,
-    onSelect: (Long?) -> Unit
-) {
-    var menuOpen by remember { mutableStateOf(false) }
-    val selected = ui.playlists.firstOrNull { it.id == ui.selectedPlaylistId }
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-            Text(stringResource(R.string.playlist_title), style = MaterialTheme.typography.titleLarge)
-            Box {
-                OutlinedButton(
-                    onClick = { menuOpen = true },
-                    modifier = Modifier.fillMaxWidth().testTag("playlist_selector")
-                ) {
-                    Text(selected?.name ?: stringResource(R.string.all_documents))
-                }
-                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.all_documents)) },
-                        onClick = {
-                            onSelect(null)
-                            menuOpen = false
-                        }
-                    )
-                    ui.playlists.forEach { playlist ->
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    stringResource(
-                                        R.string.playlist_with_count,
-                                        playlist.name,
-                                        playlist.documentIds.size
-                                    )
-                                )
-                            },
-                            onClick = {
-                                onSelect(playlist.id)
-                                menuOpen = false
-                            }
-                        )
-                    }
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onCreate, modifier = Modifier.weight(1f)) {
-                    Text(stringResource(R.string.create_playlist))
-                }
-                OutlinedButton(
-                    onClick = onDelete,
-                    enabled = selected != null,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text(stringResource(R.string.delete_playlist))
-                }
-            }
-            Text(
-                if (selected == null) stringResource(R.string.all_documents_help)
-                else stringResource(R.string.selected_playlist_help),
-                style = MaterialTheme.typography.bodySmall
-            )
-        }
-    }
-}
-
-@Composable
-private fun TextLibrarySection(
-    ui: UiState,
-    reader: ReaderViewModel,
-    onSave: () -> Unit,
-    onDelete: (Long) -> Unit
-) {
-    val playlist = ui.playlists.firstOrNull { it.id == ui.selectedPlaylistId }
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(stringResource(R.string.text_library), style = MaterialTheme.typography.titleLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = onSave,
-                    enabled = ui.text.isNotBlank(),
-                    modifier = Modifier.weight(1f).testTag("save_document")
-                ) {
-                    Text(stringResource(R.string.save_text))
-                }
-                OutlinedButton(onClick = reader::newText, modifier = Modifier.weight(1f)) {
-                    Text(stringResource(R.string.new_text))
-                }
-            }
-            Text(stringResource(R.string.draft_autosave), style = MaterialTheme.typography.bodySmall)
-            if (ui.savedTexts.isEmpty()) {
-                Text(stringResource(R.string.no_saved_texts), style = MaterialTheme.typography.bodyMedium)
-            } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxWidth().heightIn(max = 440.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    itemsIndexed(ui.savedTexts) { _, document ->
-                        SavedTextRow(
-                            document = document,
-                            selected = ui.selectedTextId == document.id,
-                            playing = ui.busy && ui.selectedTextId == document.id,
-                            playlist = playlist,
-                            onOpen = { reader.loadSavedText(document.id) },
-                            onTogglePlaylist = { reader.toggleDocumentInSelectedPlaylist(document.id) },
-                            onDelete = { onDelete(document.id) }
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SavedTextRow(
+private fun SavedDocumentCard(
     document: SavedText,
     selected: Boolean,
     playing: Boolean,
     playlist: Playlist?,
     onOpen: () -> Unit,
+    onPlay: () -> Unit,
     onTogglePlaylist: () -> Unit,
     onDelete: () -> Unit
 ) {
-    val colors = if (selected) {
-        CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-    } else CardDefaults.cardColors()
-    Card(modifier = Modifier.fillMaxWidth(), colors = colors) {
-        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-            Column(modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen)) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        colors = if (selected) {
+            CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+        } else {
+            CardDefaults.cardColors()
+        }
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Column(Modifier.fillMaxWidth().clickable(onClick = onOpen)) {
                 if (playing) {
                     Text(
                         stringResource(R.string.now_playing_mark),
@@ -773,7 +1079,13 @@ private fun SavedTextRow(
                         style = MaterialTheme.typography.labelMedium
                     )
                 }
-                Text(document.title, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                Text(
+                    document.title,
+                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
                 Text(
                     document.text.replace('\n', ' '),
                     style = MaterialTheme.typography.bodySmall,
@@ -789,24 +1101,277 @@ private fun SavedTextRow(
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                TextButton(onClick = onPlay) {
+                    Icon(Icons.Rounded.PlayArrow, contentDescription = null)
+                    Text(stringResource(R.string.play))
+                }
                 TextButton(onClick = onOpen) { Text(stringResource(R.string.load_text)) }
                 if (playlist != null) {
                     TextButton(onClick = onTogglePlaylist) {
                         Text(
                             if (document.id in playlist.documentIds) {
                                 stringResource(R.string.remove_from_playlist)
-                            } else stringResource(R.string.add_to_playlist)
+                            } else {
+                                stringResource(R.string.add_to_playlist)
+                            }
                         )
                     }
                 }
-                TextButton(onClick = onDelete) { Text(stringResource(R.string.delete_text)) }
+                IconButton(onClick = onDelete) {
+                    Icon(
+                        Icons.Rounded.Delete,
+                        contentDescription = stringResource(R.string.delete_text)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AudioSettingsSheet(
+    ui: UiState,
+    reader: ReaderViewModel,
+    installVoiceData: () -> Unit,
+    onPickVoice: () -> Unit,
+    onAgreement: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val selectedVoice = ui.voices.firstOrNull { it.id == ui.voiceId }
+    var languageMenu by remember { mutableStateOf(false) }
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 700.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 18.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                stringResource(R.string.quality_and_voice),
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                stringResource(R.string.quality_sheet_help),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            OutlinedButton(
+                onClick = onPickVoice,
+                modifier = Modifier.fillMaxWidth().testTag("voice_selector")
+            ) {
+                Icon(Icons.Rounded.SettingsVoice, contentDescription = null)
+                Spacer(Modifier.width(7.dp))
+                Text(
+                    stringResource(
+                        R.string.voice_selected,
+                        selectedVoice?.name ?: stringResource(R.string.offline_default)
+                    ),
+                    modifier = Modifier.weight(1f)
+                )
+                Icon(Icons.Rounded.KeyboardArrowDown, contentDescription = null)
+            }
+            selectedVoice?.let { VoiceDetail(it) }
+            if (selectedVoice?.online == true) {
+                Text(
+                    stringResource(R.string.network_warning),
+                    color = MaterialTheme.colorScheme.secondary,
+                    style = MaterialTheme.typography.bodySmall
+                )
+                TextButton(onClick = { reader.selectVoice(SYSTEM_DEFAULT) }) {
+                    Text(stringResource(R.string.switch_offline))
+                }
+            }
+            HorizontalDivider()
+            Text(stringResource(R.string.language), style = MaterialTheme.typography.titleMedium)
+            Box {
+                OutlinedButton(
+                    onClick = { languageMenu = true },
+                    enabled = ui.languages.isNotEmpty(),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        ui.languages.firstOrNull { it.tag == ui.languageTag }?.label
+                            ?: ui.languageTag,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Icon(Icons.Rounded.KeyboardArrowDown, contentDescription = null)
+                }
+                DropdownMenu(
+                    expanded = languageMenu,
+                    onDismissRequest = { languageMenu = false }
+                ) {
+                    ui.languages.forEach { language ->
+                        DropdownMenuItem(
+                            text = { Text(language.label) },
+                            onClick = {
+                                reader.selectLanguage(language.tag)
+                                languageMenu = false
+                            }
+                        )
+                    }
+                }
+            }
+            if (ui.languages.isEmpty()) {
+                Text(
+                    stringResource(R.string.no_languages),
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+            if (ui.ttsReady && !ui.chineseAvailable) {
+                OutlinedButton(onClick = installVoiceData) {
+                    Text(stringResource(R.string.install_data))
+                }
+            }
+            Text(stringResource(R.string.speech_rate, ui.rate))
+            Slider(
+                value = ui.rate,
+                onValueChange = reader::setRate,
+                valueRange = 0.5f..2f,
+                steps = 14
+            )
+            Text(stringResource(R.string.pitch, ui.pitch))
+            Slider(
+                value = ui.pitch,
+                onValueChange = reader::setPitch,
+                valueRange = 0.5f..2f,
+                steps = 14
+            )
+            Text(stringResource(R.string.settings_next_play), style = MaterialTheme.typography.bodySmall)
+            if (selectedVoice?.online == true) {
+                OnlineSettings(ui, reader)
+            }
+            HorizontalDivider()
+            TextButton(onClick = onAgreement) {
+                Text(stringResource(R.string.agreement))
+            }
+            Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.close))
+            }
+            Spacer(Modifier.height(20.dp))
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PlaybackQueueSheet(
+    ui: UiState,
+    onPlay: (Long) -> Unit,
+    onCycleMode: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val playlist = ui.playlists.firstOrNull { it.id == ui.selectedPlaylistId }
+    val byId = ui.savedTexts.associateBy(SavedText::id)
+    val queue = playlist?.documentIds?.mapNotNull(byId::get) ?: ui.savedTexts
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        stringResource(R.string.playback_queue),
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        stringResource(
+                            R.string.queue_playlist_and_count,
+                            playlist?.name ?: stringResource(R.string.all_documents),
+                            queue.size
+                        ),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                FilterChip(
+                    selected = true,
+                    onClick = onCycleMode,
+                    label = { Text(playbackModeShortLabel(ui.playbackMode)) },
+                    leadingIcon = {
+                        Icon(playbackModeIcon(ui.playbackMode), contentDescription = null)
+                    },
+                    modifier = Modifier.testTag("queue_mode_cycle")
+                )
+            }
+            HorizontalDivider()
+            if (queue.isEmpty()) {
+                Text(
+                    stringResource(R.string.queue_empty),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 36.dp),
+                    textAlign = TextAlign.Center,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 540.dp),
+                    contentPadding = PaddingValues(bottom = 28.dp),
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    itemsIndexed(queue, key = { _, item -> item.id }) { index, document ->
+                        val current = document.id == ui.selectedTextId
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onPlay(document.id) }
+                                .testTag("queue_item_${document.id}"),
+                            shape = RoundedCornerShape(14.dp),
+                            color = if (current) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                Color.Transparent
+                            }
+                        ) {
+                            Row(
+                                Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "${index + 1}",
+                                    modifier = Modifier.width(28.dp),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        document.title,
+                                        fontWeight = if (current) FontWeight.Bold else FontWeight.Medium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        document.text.replace('\n', ' '),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                if (current && (ui.busy || ui.paused)) {
+                                    Icon(
+                                        if (ui.paused) Icons.Rounded.Pause else Icons.Rounded.GraphicEq,
+                                        contentDescription = stringResource(R.string.now_playing_mark),
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                } else {
+                                    Icon(
+                                        Icons.Rounded.PlayArrow,
+                                        contentDescription = stringResource(R.string.play)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun OfflineDownloadSection(
+private fun OfflineDownloadCard(
     ui: UiState,
     currentDocument: SavedText?,
     reader: ReaderViewModel,
@@ -814,11 +1379,14 @@ private fun OfflineDownloadSection(
     exportWav: () -> Unit
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(stringResource(R.string.offline_download_title), style = MaterialTheme.typography.titleMedium)
+            Text(
+                stringResource(R.string.offline_download_title),
+                style = MaterialTheme.typography.titleMedium
+            )
             val hasMp3 = currentDocument?.offlineAudioPath != null
             val hasWav = currentDocument?.offlineWavPath != null
             val downloaded = hasMp3 || hasWav
@@ -854,16 +1422,12 @@ private fun OfflineDownloadSection(
                         onClick = exportMp3,
                         enabled = hasMp3,
                         modifier = Modifier.weight(1f)
-                    ) {
-                        Text(stringResource(R.string.export_mp3))
-                    }
+                    ) { Text(stringResource(R.string.export_mp3)) }
                     OutlinedButton(
                         onClick = exportWav,
                         enabled = hasWav,
                         modifier = Modifier.weight(1f)
-                    ) {
-                        Text(stringResource(R.string.export_wav))
-                    }
+                    ) { Text(stringResource(R.string.export_wav)) }
                 }
                 OutlinedButton(
                     onClick = reader::removeDownloadedAudio,
@@ -878,18 +1442,56 @@ private fun OfflineDownloadSection(
 }
 
 @Composable
-private fun VoicePickerDialog(ui: UiState, onSelect: (String) -> Unit, onDismiss: () -> Unit) {
+private fun NameInputDialog(
+    title: String,
+    value: String,
+    label: String,
+    confirmLabel: String,
+    fieldTestTag: String,
+    onValueChange: (String) -> Unit,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            OutlinedTextField(
+                value = value,
+                onValueChange = onValueChange,
+                label = { Text(label) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().testTag(fieldTestTag)
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm, enabled = value.isNotBlank()) {
+                Text(confirmLabel)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
+        }
+    )
+}
+
+@Composable
+private fun VoicePickerDialog(
+    ui: UiState,
+    onSelect: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.voice_select)) },
         text = {
-            LazyColumn(Modifier.heightIn(max = 440.dp)) {
-                itemsIndexed(ui.voices) { _, voice ->
+            LazyColumn(Modifier.heightIn(max = 470.dp)) {
+                items(ui.voices, key = VoiceOption::id) { voice ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { onSelect(voice.id) }
-                            .padding(vertical = 6.dp)
+                            .padding(vertical = 7.dp)
                             .testTag("voice_${voice.id}"),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -928,9 +1530,19 @@ private fun VoiceDetail(voice: VoiceOption) {
 private fun OnlineSettings(ui: UiState, reader: ReaderViewModel) {
     Text(stringResource(R.string.online_options), style = MaterialTheme.typography.titleMedium)
     Text(stringResource(R.string.noise, ui.noise))
-    Slider(value = ui.noise, onValueChange = reader::setNoise, valueRange = 0f..1f, steps = 19)
+    Slider(
+        value = ui.noise,
+        onValueChange = reader::setNoise,
+        valueRange = 0f..1f,
+        steps = 19
+    )
     Text(stringResource(R.string.length, ui.length))
-    Slider(value = ui.length, onValueChange = reader::setLength, valueRange = 0.5f..2f, steps = 14)
+    Slider(
+        value = ui.length,
+        onValueChange = reader::setLength,
+        valueRange = 0.5f..2f,
+        steps = 14
+    )
     TextButton(onClick = { reader.setFormat(if (ui.format == "mp3") "wav" else "mp3") }) {
         Text(stringResource(R.string.format, ui.format))
     }
@@ -961,4 +1573,21 @@ private fun OnlineSettings(ui: UiState, reader: ReaderViewModel) {
         )
         Text(stringResource(R.string.custom_contract), style = MaterialTheme.typography.bodySmall)
     }
+}
+
+@Composable
+private fun AgreementDialog(onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.agreement)) },
+        text = {
+            Text(
+                stringResource(R.string.agreement_content),
+                modifier = Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState())
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) }
+        }
+    )
 }

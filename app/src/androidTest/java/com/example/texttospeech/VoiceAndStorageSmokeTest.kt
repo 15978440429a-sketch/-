@@ -3,7 +3,6 @@ package com.example.texttospeech
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
-import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -23,21 +22,20 @@ class VoiceAndStorageSmokeTest {
 
     @Test
     fun switchesOnlineVoicesAndPlaybackModesWithoutCrashing() {
-        selectVoice("online.ayaka")
-        selectVoice("online.eula")
-        selectVoice("online.klee")
+        composeRule.onNodeWithTag("mode_cycle").performClick().assertTextContains("单曲")
+        composeRule.onNodeWithTag("mode_cycle").performClick().assertTextContains("随机")
+        composeRule.onNodeWithTag("mode_cycle").performClick().assertTextContains("顺序")
 
-        composeRule.onNodeWithTag("mode_repeat_one")
-            .performScrollTo()
-            .performClick()
-            .assertIsSelected()
-        composeRule.onNodeWithTag("mode_shuffle").performClick().assertIsSelected()
-        composeRule.onNodeWithTag("mode_sequential").performClick().assertIsSelected()
+        composeRule.onNodeWithTag("quality_settings").performClick()
+        selectVoiceFromSettings("online.ayaka")
+        selectVoiceFromSettings("online.eula")
+        selectVoiceFromSettings("online.klee")
     }
 
     @Test
     fun draftSurvivesActivityRecreation() {
         val draft = "这段文字用于验证退出界面后仍能恢复。"
+        composeRule.onNodeWithTag("editor_tab").performClick()
         composeRule.onNodeWithTag("text_input")
             .performScrollTo()
             .performTextReplacement(draft)
@@ -53,6 +51,7 @@ class VoiceAndStorageSmokeTest {
 
     @Test
     fun documentNameInputStartsBlank() {
+        composeRule.onNodeWithTag("editor_tab").performClick()
         composeRule.onNodeWithTag("text_input")
             .performScrollTo()
             .performTextReplacement("这是正文，不应该自动成为文稿名称。")
@@ -69,7 +68,7 @@ class VoiceAndStorageSmokeTest {
         )
     }
 
-    private fun selectVoice(id: String) {
+    private fun selectVoiceFromSettings(id: String) {
         composeRule.onNodeWithTag("voice_selector").performScrollTo().performClick()
         composeRule.onNodeWithTag("voice_$id").performClick()
         composeRule.waitForIdle()

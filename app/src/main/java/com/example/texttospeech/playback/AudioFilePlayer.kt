@@ -15,9 +15,11 @@ class AudioFilePlayer {
 
     private var player: MediaPlayer? = null
     private var continuation: CancellableContinuation<Unit>? = null
+    private var pauseRequested = false
 
-    suspend fun play(file: File): Unit = suspendCancellableCoroutine { cont ->
+    suspend fun play(file: File, startPaused: Boolean = false): Unit = suspendCancellableCoroutine { cont ->
         stop()
+        pauseRequested = startPaused
         val media = MediaPlayer()
         player = media
         continuation = cont
@@ -51,7 +53,7 @@ class AudioFilePlayer {
             media.setDataSource(file.absolutePath)
             media.setOnPreparedListener {
                 try {
-                    if (cont.isActive) it.start()
+                    if (cont.isActive && !pauseRequested) it.start()
                 } catch (error: RuntimeException) {
                     fail(error)
                 }
@@ -70,7 +72,28 @@ class AudioFilePlayer {
         }
     }
 
+    fun pause(): Boolean {
+        pauseRequested = true
+        val active = player ?: return false
+        return runCatching {
+            if (active.isPlaying) active.pause()
+            true
+        }.getOrDefault(false)
+    }
+
+    fun resume(): Boolean {
+        pauseRequested = false
+        val active = player ?: return false
+        return runCatching {
+            if (!active.isPlaying) active.start()
+            true
+        }.getOrDefault(false)
+    }
+
+    fun hasActivePlayer(): Boolean = player != null
+
     fun stop() {
+        pauseRequested = false
         continuation?.cancel()
         // Cancellation normally releases the player; this also covers a completed continuation.
         runCatching { player?.release() }

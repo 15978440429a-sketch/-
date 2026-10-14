@@ -72,7 +72,8 @@ data class UiState(
     val ttsReady: Boolean = false,
     val chineseAvailable: Boolean = false,
     val status: String = "初始化中",
-    val busy: Boolean = false
+    val busy: Boolean = false,
+    val paused: Boolean = false
 )
 
 const val SYSTEM_DEFAULT = "system.default"
