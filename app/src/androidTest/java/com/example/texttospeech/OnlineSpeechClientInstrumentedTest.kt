@@ -27,7 +27,7 @@ class OnlineSpeechClientInstrumentedTest {
             HuggingFaceVitsClient.buildDataPayload(
                 sessionHash = "session-1",
                 fnIndex = 0,
-                speakerIndex = 87,
+                speakerValue = "神里绫华（龟龟）",
                 parameters = HuggingFaceVitsClient.Parameters(
                     text = "你好",
                     speaker = "神里绫华",
@@ -41,8 +41,8 @@ class OnlineSpeechClientInstrumentedTest {
         assertEquals(0, payload.getInt("fn_index"))
         val data = payload.getJSONArray("data")
         assertEquals("你好", data.getString(0))
-        assertEquals(0, data.getInt(1))
-        assertEquals(87, data.getInt(2))
+        assertEquals("中文", data.getString(1))
+        assertEquals("神里绫华（龟龟）", data.getString(2))
         assertEquals(0.668, data.getDouble(4), 0.0001)
         assertEquals(1.2, data.getDouble(5), 0.0001)
     }
@@ -68,9 +68,9 @@ class OnlineSpeechClientInstrumentedTest {
         val config = HuggingFaceVitsClient(context).parseConfig(configHtml)
 
         assertEquals(1, config.fnIndex)
-        assertEquals(1, config.speakerIndexes["神里绫华"])
-        assertEquals(2, config.speakerIndexes["可莉"])
-        assertEquals(3, config.speakerIndexes["优菈"])
+        assertEquals("神里绫华（龟龟）", config.speakerValues["神里绫华"])
+        assertEquals("可莉", config.speakerValues["可莉"])
+        assertEquals("优菈", config.speakerValues["优菈"])
     }
 
     @Test

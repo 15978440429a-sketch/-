@@ -88,13 +88,13 @@ class HuggingFaceVitsClient(context: Context) {
         onStage(Stage.CONNECTING)
 
         val config = resolveConfig()
-        val speakerIndex = config.speakerIndexes[parameters.speaker]
-            ?: DEFAULT_SPEAKER_INDEXES[parameters.speaker]
+        val speakerValue = config.speakerValues[parameters.speaker]
+            ?: DEFAULT_SPEAKER_VALUES[parameters.speaker]
             ?: throw InvalidResponse("Speaker is not available")
 
         val audioDataUri = try {
             withTimeout(QUEUE_TIMEOUT_MILLIS) {
-                awaitQueueResult(config.fnIndex, speakerIndex, parameters, onStage)
+                awaitQueueResult(config.fnIndex, speakerValue, parameters, onStage)
             }
         } catch (_: TimeoutCancellationException) {
             throw SocketTimeoutException("Public Gradio synthesis timed out")
@@ -190,15 +190,15 @@ class HuggingFaceVitsClient(context: Context) {
         }
         if (fnIndex < 0) throw InvalidResponse("Synthesis function is missing")
 
-        val indexes = DEFAULT_SPEAKER_INDEXES.mapValues { (speaker, fallback) ->
-            speakerChoices.indexOfSpeaker(speaker).takeIf { it >= 0 } ?: fallback
+        val values = DEFAULT_SPEAKER_VALUES.mapValues { (speaker, fallback) ->
+            speakerChoices.findSpeakerValue(speaker) ?: fallback
         }
-        return SpaceConfig(fnIndex, indexes)
+        return SpaceConfig(fnIndex, values)
     }
 
     private suspend fun awaitQueueResult(
         fnIndex: Int,
-        speakerIndex: Int,
+        speakerValue: String,
         parameters: Parameters,
         onStage: (Stage) -> Unit
     ): String = suspendCancellableCoroutine { continuation ->
@@ -238,7 +238,7 @@ class HuggingFaceVitsClient(context: Context) {
                             val payload = buildDataPayload(
                                 sessionHash = sessionHash,
                                 fnIndex = fnIndex,
-                                speakerIndex = speakerIndex,
+                                speakerValue = speakerValue,
                                 parameters = parameters
                             )
                             if (!webSocket.send(payload)) {
@@ -348,7 +348,7 @@ class HuggingFaceVitsClient(context: Context) {
 
     internal data class SpaceConfig(
         val fnIndex: Int,
-        val speakerIndexes: Map<String, Int>
+        val speakerValues: Map<String, String>
     )
 
     companion object {
@@ -362,12 +362,12 @@ class HuggingFaceVitsClient(context: Context) {
         private const val QUEUE_TIMEOUT_MILLIS = 120_000L
         private const val DEFAULT_NOISE_SCALE_W = 0.668
 
-        internal val DEFAULT_SPEAKER_INDEXES = mapOf(
-            "神里绫华" to 87,
-            "可莉" to 103,
-            "优菈" to 124
+        internal val DEFAULT_SPEAKER_VALUES = mapOf(
+            "神里绫华" to "神里绫华（龟龟）",
+            "可莉" to "可莉",
+            "优菈" to "优菈"
         )
-        private val DEFAULT_CONFIG = SpaceConfig(0, DEFAULT_SPEAKER_INDEXES)
+        private val DEFAULT_CONFIG = SpaceConfig(0, DEFAULT_SPEAKER_VALUES)
 
         internal fun buildHashPayload(sessionHash: String, fnIndex: Int): String =
             JSONObject()
@@ -378,15 +378,15 @@ class HuggingFaceVitsClient(context: Context) {
         internal fun buildDataPayload(
             sessionHash: String,
             fnIndex: Int,
-            speakerIndex: Int,
+            speakerValue: String,
             parameters: Parameters
         ): String = JSONObject()
             .put(
                 "data",
                 JSONArray()
                     .put(parameters.text)
-                    .put(0)
-                    .put(speakerIndex)
+                    .put("中文")
+                    .put(speakerValue)
                     .put(parameters.noise.toDouble())
                     .put(DEFAULT_NOISE_SCALE_W)
                     .put(parameters.length.toDouble())
@@ -421,12 +421,12 @@ private fun JSONArray.containsInt(value: Int): Boolean {
     return false
 }
 
-private fun JSONArray.indexOfSpeaker(speaker: String): Int {
+private fun JSONArray.findSpeakerValue(speaker: String): String? {
     for (index in 0 until length()) {
         val choice = optString(index)
         if (choice == speaker || choice.startsWith("$speaker（") || choice.startsWith("$speaker(")) {
-            return index
+            return choice
         }
     }
-    return -1
+    return null
 }
