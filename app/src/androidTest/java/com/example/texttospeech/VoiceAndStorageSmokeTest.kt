@@ -1,13 +1,16 @@
 package com.example.texttospeech
 
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
-import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.text.AnnotatedString
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Rule
 import org.junit.Test
@@ -58,7 +61,12 @@ class VoiceAndStorageSmokeTest {
             .performScrollTo()
             .performClick()
 
-        composeRule.onNodeWithTag("document_name_input").assertTextEquals("")
+        composeRule.onNodeWithTag("document_name_input").assert(
+            SemanticsMatcher.expectValue(
+                SemanticsProperties.EditableText,
+                AnnotatedString("")
+            )
+        )
     }
 
     private fun selectVoice(id: String) {
