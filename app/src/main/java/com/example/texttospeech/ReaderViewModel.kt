@@ -1130,7 +1130,7 @@ class ReaderViewModel(
         parts: List<File>
     ) = withContext(Dispatchers.IO) {
         if (segments.isEmpty() || segments.size != parts.size) {
-            throw@withContext SegmentCacheFailure(
+            throw SegmentCacheFailure(
                 IllegalStateException("Sentence audio cache is incomplete")
             )
         }
