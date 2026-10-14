@@ -16,6 +16,16 @@ data class SavedText(
     val id: Long,
     val title: String,
     val text: String,
+    val updatedAt: Long,
+    val offlineAudioPath: String? = null,
+    val offlineVoiceId: String? = null,
+    val offlineTextHash: String? = null
+)
+
+data class Playlist(
+    val id: Long,
+    val name: String,
+    val documentIds: List<Long>,
     val updatedAt: Long
 )
 
@@ -44,10 +54,18 @@ data class UiState(
     val voices: List<VoiceOption> = emptyList(),
     val languages: List<LanguageOption> = emptyList(),
     val savedTexts: List<SavedText> = emptyList(),
+    val playlists: List<Playlist> = emptyList(),
     val selectedTextId: Long? = null,
+    val selectedPlaylistId: Long? = null,
     val playbackMode: PlaybackMode = PlaybackMode.SEQUENTIAL,
+    val playsPerItem: Int = 1,
+    val currentPlayNumber: Int = 1,
     val highlightStart: Int = -1,
     val highlightEnd: Int = -1,
+    val downloadBusy: Boolean = false,
+    val timerMinutes: Int = 10,
+    val scheduledPlaybackAt: Long? = null,
+    val timerRemainingSeconds: Long = 0,
     val storageReady: Boolean = false,
     val storageError: String? = null,
     val ttsReady: Boolean = false,

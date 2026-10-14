@@ -1,6 +1,8 @@
 package com.example.texttospeech
 
 import android.app.Application
+import android.content.Context
+import android.net.Uri
 import android.speech.tts.TextToSpeech
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
@@ -11,6 +13,7 @@ import com.example.texttospeech.model.EULA
 import com.example.texttospeech.model.KLEE
 import com.example.texttospeech.model.LanguageOption
 import com.example.texttospeech.model.PlaybackMode
+import com.example.texttospeech.model.Playlist
 import com.example.texttospeech.model.SYSTEM_DEFAULT
 import com.example.texttospeech.model.SavedText
 import com.example.texttospeech.model.UiState
@@ -18,6 +21,7 @@ import com.example.texttospeech.model.VoiceOption
 import com.example.texttospeech.network.HuggingFaceVitsClient
 import com.example.texttospeech.network.OnlineSpeechClient
 import com.example.texttospeech.playback.AudioFilePlayer
+import com.example.texttospeech.playback.OfflineAudioExporter
 import com.example.texttospeech.storage.TextRepository
 import com.example.texttospeech.tts.SystemTtsManager
 import com.example.texttospeech.util.TextSegmenter
@@ -25,6 +29,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,9 +38,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import java.io.File
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import java.security.MessageDigest
 import java.util.Locale
 import kotlin.random.Random
 
@@ -48,19 +55,25 @@ class ReaderViewModel(
     private val huggingFace = HuggingFaceVitsClient(app)
     private val online = OnlineSpeechClient(app)
     private val audio = AudioFilePlayer()
+    private val audioExporter = OfflineAudioExporter()
     private val textRepository = TextRepository(app)
+    private val preferences = app.getSharedPreferences(SETTINGS_NAME, Context.MODE_PRIVATE)
 
     private var onlineJob: Job? = null
     private var offlineJob: Job? = null
+    private var downloadJob: Job? = null
     private var draftSaveJob: Job? = null
     private var advanceJob: Job? = null
+    private var timerJob: Job? = null
     private var playbackGeneration = 0L
     private var activePlaybackToken = -1L
     private var activeSegments: List<TextSegmenter.Segment> = emptyList()
+    private var completedPlaysForItem = 0
     private var editVersion = saved.get<Long>("storage_revision") ?: 0L
     private var storageLoaded = false
     private var changedBeforeStorageLoad = false
 
+    private val storedTimerTarget = preferences.getLong(PREF_TIMER_TARGET, 0L).takeIf { it > 0L }
     private val _uiState = MutableStateFlow(
         UiState(
             text = saved["text"] ?: "",
@@ -74,7 +87,12 @@ class ReaderViewModel(
             serverUrl = saved["server"] ?: "",
             speaker = saved["speaker"] ?: "",
             selectedTextId = saved.get<Long>("selected_text_id"),
+            selectedPlaylistId = saved.get<Long>("selected_playlist_id"),
             playbackMode = PlaybackMode.fromStored(saved["playback_mode"]),
+            playsPerItem = (saved.get<Int>("plays_per_item") ?: 1).coerceIn(1, 99),
+            timerMinutes = preferences.getInt(PREF_TIMER_MINUTES, 10).coerceIn(1, 1_440),
+            scheduledPlaybackAt = storedTimerTarget,
+            timerRemainingSeconds = storedTimerTarget?.let(::remainingSeconds) ?: 0,
             voices = fixedVoices()
         )
     )
@@ -86,24 +104,42 @@ class ReaderViewModel(
 
     private fun fixedVoices() = listOf(
         VoiceOption(
-            SYSTEM_DEFAULT, app.getString(R.string.offline_default), "跟随语言选择",
-            app.getString(R.string.system_source), online = false
+            SYSTEM_DEFAULT,
+            app.getString(R.string.offline_default),
+            "跟随语言选择",
+            app.getString(R.string.system_source),
+            online = false
         ),
         VoiceOption(
-            AYAKA, app.getString(R.string.ayaka), "中文",
-            app.getString(R.string.public_source), online = true, onlineSpeaker = "神里绫华"
+            AYAKA,
+            app.getString(R.string.ayaka),
+            "中文",
+            app.getString(R.string.public_source),
+            online = true,
+            onlineSpeaker = "神里绫华"
         ),
         VoiceOption(
-            EULA, app.getString(R.string.eula), "中文",
-            app.getString(R.string.public_source), online = true, onlineSpeaker = "优菈"
+            EULA,
+            app.getString(R.string.eula),
+            "中文",
+            app.getString(R.string.public_source),
+            online = true,
+            onlineSpeaker = "优菈"
         ),
         VoiceOption(
-            KLEE, app.getString(R.string.klee), "中文",
-            app.getString(R.string.public_source), online = true, onlineSpeaker = "可莉"
+            KLEE,
+            app.getString(R.string.klee),
+            "中文",
+            app.getString(R.string.public_source),
+            online = true,
+            onlineSpeaker = "可莉"
         ),
         VoiceOption(
-            CUSTOM, app.getString(R.string.custom_voice), "由服务器决定",
-            app.getString(R.string.custom_source), online = true
+            CUSTOM,
+            app.getString(R.string.custom_voice),
+            "由服务器决定",
+            app.getString(R.string.custom_source),
+            online = true
         )
     )
 
@@ -112,6 +148,7 @@ class ReaderViewModel(
             try {
                 val draft = textRepository.loadDraft()
                 val documents = textRepository.loadDocuments()
+                val playlists = textRepository.loadPlaylists()
                 val current = _uiState.value
                 val restoredText = saved.get<String>("text")
                 val hasLocalText = restoredText != null || changedBeforeStorageLoad
@@ -119,29 +156,42 @@ class ReaderViewModel(
                 editVersion = if (hasLocalText) maxOf(editVersion, draft.revision + 1)
                 else draft.revision
                 saved["storage_revision"] = editVersion
+
                 val selectedId = current.selectedTextId ?: draft.selectedDocumentId
                 val validSelectedId = selectedId?.takeIf { id -> documents.any { it.id == id } }
+                val playlistId = current.selectedPlaylistId ?: draft.selectedPlaylistId
+                val validPlaylistId = playlistId?.takeIf { id -> playlists.any { it.id == id } }
                 val chosenMode = saved.get<String>("playback_mode")
                     ?.let(PlaybackMode::fromStored) ?: draft.playbackMode
+                val chosenPlays = saved.get<Int>("plays_per_item")
+                    ?.coerceIn(1, 99) ?: draft.playsPerItem
+
                 saveTextInSavedState(chosenText)
                 saved["selected_text_id"] = validSelectedId
+                saved["selected_playlist_id"] = validPlaylistId
                 saved["playback_mode"] = chosenMode.storedValue
+                saved["plays_per_item"] = chosenPlays
                 _uiState.value = current.copy(
                     text = chosenText,
                     savedTexts = documents,
+                    playlists = playlists,
                     selectedTextId = validSelectedId,
+                    selectedPlaylistId = validPlaylistId,
                     playbackMode = chosenMode,
+                    playsPerItem = chosenPlays,
                     storageReady = true,
                     storageError = null
                 )
                 storageLoaded = true
                 scheduleDraftSave(0)
+                startTimerMonitor()
             } catch (_: Exception) {
                 storageLoaded = true
                 _uiState.value = _uiState.value.copy(
                     storageReady = true,
                     storageError = app.getString(R.string.error_storage)
                 )
+                startTimerMonitor()
             }
         }
     }
@@ -162,7 +212,7 @@ class ReaderViewModel(
     }
 
     fun updateText(value: String) {
-        if (_uiState.value.busy) stop()
+        if (_uiState.value.busy || _uiState.value.downloadBusy) stop()
         bumpRevision()
         saveTextInSavedState(value)
         _uiState.value = _uiState.value.copy(
@@ -193,23 +243,46 @@ class ReaderViewModel(
         scheduleDraftSave(0)
     }
 
-    fun saveCurrentText() {
+    fun suggestedTitle(): String {
+        val state = _uiState.value
+        state.savedTexts.firstOrNull { it.id == state.selectedTextId }?.let { return it.title }
+        val line = state.text.lineSequence().map(String::trim).firstOrNull(String::isNotEmpty)
+            ?: app.getString(R.string.unnamed_document)
+        return line.take(40)
+    }
+
+    fun saveCurrentText(title: String) {
         val state = _uiState.value
         if (state.text.isBlank()) {
             showError(app.getString(R.string.error_empty))
             return
         }
+        if (title.isBlank()) {
+            showError(app.getString(R.string.error_title_empty))
+            return
+        }
         val capturedText = state.text
         val capturedId = state.selectedTextId
+        val previous = state.savedTexts.firstOrNull { it.id == capturedId }
+        val keepAudio = previous?.text == capturedText
         viewModelScope.launch {
             try {
-                val id = textRepository.saveDocument(capturedId, capturedText)
-                val documents = textRepository.loadDocuments()
-                val current = _uiState.value
+                val id = textRepository.saveDocument(
+                    capturedId,
+                    title,
+                    capturedText,
+                    keepOfflineAudio = keepAudio
+                )
+                if (!keepAudio) previous?.offlineAudioPath?.let { File(it).delete() }
+                val selectedPlaylist = _uiState.value.playlists
+                    .firstOrNull { it.id == _uiState.value.selectedPlaylistId }
+                if (capturedId == null && selectedPlaylist != null) {
+                    textRepository.addToPlaylist(selectedPlaylist, id)
+                }
+                refreshLibrary()
                 saved["selected_text_id"] = id
                 bumpRevision()
-                _uiState.value = current.copy(
-                    savedTexts = documents,
+                _uiState.value = _uiState.value.copy(
                     selectedTextId = id,
                     storageReady = true,
                     storageError = null,
@@ -229,17 +302,17 @@ class ReaderViewModel(
     }
 
     fun deleteSavedText(id: Long) {
+        val document = _uiState.value.savedTexts.firstOrNull { it.id == id }
         if (_uiState.value.selectedTextId == id) stop(showStatus = false)
         viewModelScope.launch {
             try {
                 textRepository.deleteDocument(id)
-                val documents = textRepository.loadDocuments()
-                val current = _uiState.value
-                val selectedId = current.selectedTextId.takeIf { it != id }
+                document?.offlineAudioPath?.let { File(it).delete() }
+                refreshLibrary()
+                val selectedId = _uiState.value.selectedTextId.takeIf { it != id }
                 saved["selected_text_id"] = selectedId
                 bumpRevision()
-                _uiState.value = current.copy(
-                    savedTexts = documents,
+                _uiState.value = _uiState.value.copy(
                     selectedTextId = selectedId,
                     storageError = null,
                     status = app.getString(R.string.status_document_deleted)
@@ -251,10 +324,98 @@ class ReaderViewModel(
         }
     }
 
+    fun createPlaylist(name: String) {
+        if (name.isBlank()) {
+            showError(app.getString(R.string.error_playlist_name))
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val id = textRepository.createPlaylist(name)
+                refreshLibrary()
+                selectPlaylist(id)
+                _uiState.value = _uiState.value.copy(
+                    status = app.getString(R.string.status_playlist_created)
+                )
+            } catch (_: Exception) {
+                showStorageError()
+            }
+        }
+    }
+
+    fun deleteSelectedPlaylist() {
+        val id = _uiState.value.selectedPlaylistId ?: return
+        stop(showStatus = false)
+        viewModelScope.launch {
+            try {
+                textRepository.deletePlaylist(id)
+                refreshLibrary()
+                selectPlaylist(null)
+                _uiState.value = _uiState.value.copy(
+                    status = app.getString(R.string.status_playlist_deleted)
+                )
+            } catch (_: Exception) {
+                showStorageError()
+            }
+        }
+    }
+
+    fun selectPlaylist(id: Long?) {
+        if (id != null && _uiState.value.playlists.none { it.id == id }) return
+        stop(showStatus = false)
+        bumpRevision()
+        saved["selected_playlist_id"] = id
+        _uiState.value = _uiState.value.copy(selectedPlaylistId = id)
+        scheduleDraftSave(0)
+    }
+
+    fun toggleDocumentInSelectedPlaylist(documentId: Long) {
+        val state = _uiState.value
+        val playlist = state.playlists.firstOrNull { it.id == state.selectedPlaylistId } ?: return
+        viewModelScope.launch {
+            try {
+                if (documentId in playlist.documentIds) {
+                    textRepository.removeFromPlaylist(playlist.id, documentId)
+                } else {
+                    textRepository.addToPlaylist(playlist, documentId)
+                }
+                refreshLibrary()
+                _uiState.value = _uiState.value.copy(
+                    status = app.getString(R.string.status_playlist_updated)
+                )
+            } catch (_: Exception) {
+                showStorageError()
+            }
+        }
+    }
+
+    private suspend fun refreshLibrary() {
+        val documents = textRepository.loadDocuments()
+        val playlists = textRepository.loadPlaylists()
+        val validPlaylist = _uiState.value.selectedPlaylistId
+            ?.takeIf { selected -> playlists.any { it.id == selected } }
+        _uiState.value = _uiState.value.copy(
+            savedTexts = documents,
+            playlists = playlists,
+            selectedPlaylistId = validPlaylist
+        )
+        saved["selected_playlist_id"] = validPlaylist
+    }
+
     fun setPlaybackMode(mode: PlaybackMode) {
+        stop(showStatus = false)
         bumpRevision()
         saved["playback_mode"] = mode.storedValue
         _uiState.value = _uiState.value.copy(playbackMode = mode)
+        scheduleDraftSave(0)
+    }
+
+    fun setPlaysPerItem(value: Int) {
+        val plays = value.coerceIn(1, 99)
+        stop(showStatus = false)
+        bumpRevision()
+        saved["plays_per_item"] = plays
+        _uiState.value = _uiState.value.copy(playsPerItem = plays, currentPlayNumber = 1)
         scheduleDraftSave(0)
     }
 
@@ -262,9 +423,7 @@ class ReaderViewModel(
         draftSaveJob?.cancel()
         val state = _uiState.value
         val revision = editVersion
-        draftSaveJob = viewModelScope.launch {
-            persistSnapshot(state, revision)
-        }
+        draftSaveJob = viewModelScope.launch { persistSnapshot(state, revision) }
     }
 
     fun persistNowBlocking() {
@@ -275,6 +434,8 @@ class ReaderViewModel(
                 state.text,
                 state.playbackMode,
                 state.selectedTextId,
+                state.selectedPlaylistId,
+                state.playsPerItem,
                 editVersion
             )
         }.onFailure {
@@ -294,7 +455,14 @@ class ReaderViewModel(
 
     private suspend fun persistSnapshot(state: UiState, revision: Long) {
         try {
-            textRepository.saveDraft(state.text, state.playbackMode, state.selectedTextId, revision)
+            textRepository.saveDraft(
+                state.text,
+                state.playbackMode,
+                state.selectedTextId,
+                state.selectedPlaylistId,
+                state.playsPerItem,
+                revision
+            )
             if (_uiState.value.storageError != null) {
                 _uiState.value = _uiState.value.copy(storageError = null)
             }
@@ -395,13 +563,53 @@ class ReaderViewModel(
             return
         }
         stop(showStatus = false)
-        val token = playbackGeneration
+        completedPlaysForItem = 0
+        _uiState.value = _uiState.value.copy(currentPlayNumber = 1)
+        startCurrentPlayback(playbackGeneration)
+    }
+
+    private fun startCurrentPlayback(token: Long) {
+        val state = _uiState.value
+        if (state.text.isBlank() || token != playbackGeneration) return
         activePlaybackToken = token
         val option = state.voices.firstOrNull { it.id == state.voiceId }
-        if (option?.online == true) {
-            playOnline(state, option, token)
-        } else {
-            playOffline(state, option, token)
+        val cached = cachedAudioFor(state)
+        when {
+            cached != null -> playDownloadedAudio(state, cached, token)
+            option?.online == true -> playOnline(state, option, token)
+            else -> playOffline(state, option, token)
+        }
+    }
+
+    private fun cachedAudioFor(state: UiState): File? {
+        val document = state.savedTexts.firstOrNull { it.id == state.selectedTextId } ?: return null
+        if (document.offlineVoiceId != state.voiceId) return null
+        if (document.offlineTextHash != textHash(state.text)) return null
+        return document.offlineAudioPath?.let(::File)?.takeIf(File::isFile)
+    }
+
+    private fun playDownloadedAudio(state: UiState, file: File, token: Long) {
+        activeSegments = listOf(TextSegmenter.Segment(state.text, 0, state.text.length))
+        _uiState.value = _uiState.value.copy(
+            busy = true,
+            status = app.getString(R.string.status_offline_mp3_playing),
+            highlightStart = 0,
+            highlightEnd = state.text.length
+        )
+        onlineJob = viewModelScope.launch {
+            val job = currentCoroutineContext()[Job]
+            try {
+                audio.play(file)
+            } catch (_: CancellationException) {
+                return@launch
+            } catch (error: Exception) {
+                currentCoroutineContext().ensureActive()
+                showError(onlineError(error))
+                return@launch
+            } finally {
+                if (onlineJob === job) onlineJob = null
+            }
+            completePlayback(token)
         }
     }
 
@@ -421,7 +629,7 @@ class ReaderViewModel(
             status = app.getString(R.string.status_preparing)
         )
         onlineJob = viewModelScope.launch {
-            val job = coroutineContext[Job]
+            val job = currentCoroutineContext()[Job]
             try {
                 val publicVoice = state.voiceId != CUSTOM
                 val segmentLimit = if (publicVoice) 96 else 180
@@ -441,71 +649,25 @@ class ReaderViewModel(
                         app.getString(R.string.status_requesting, index + 1, segments.size)
                     )
                     val parameters = OnlineSpeechClient.Parameters(
-                        segment.text, speaker, state.format, state.noise, state.length
+                        segment.text,
+                        speaker,
+                        state.format,
+                        state.noise,
+                        state.length
                     )
-                    val file = if (!publicVoice) {
-                        online.synthesize(customServer, parameters)
+                    val file = if (publicVoice) {
+                        synthesizePreset(parameters, index + 1, segments.size, segment)
                     } else {
-                        try {
-                            huggingFace.synthesize(
-                                HuggingFaceVitsClient.Parameters(
-                                    text = segment.text,
-                                    speaker = speaker,
-                                    noise = state.noise,
-                                    length = state.length
-                                )
-                            ) { stage ->
-                                val status = when (stage) {
-                                    HuggingFaceVitsClient.Stage.CONNECTING ->
-                                        R.string.status_hf_connecting
-                                    HuggingFaceVitsClient.Stage.WAITING ->
-                                        R.string.status_hf_waiting
-                                    HuggingFaceVitsClient.Stage.SYNTHESIZING ->
-                                        R.string.status_hf_synthesizing
-                                }
-                                showActiveSegment(
-                                    segment,
-                                    app.getString(status, index + 1, segments.size)
-                                )
-                            }
-                        } catch (cancelled: CancellationException) {
-                            throw cancelled
-                        } catch (huggingFaceError: Exception) {
-                            coroutineContext.ensureActive()
-                            showActiveSegment(
-                                segment,
-                                app.getString(
-                                    R.string.status_fallback_public,
-                                    index + 1,
-                                    segments.size
-                                )
-                            )
-                            try {
-                                online.synthesizeFirstAvailable(
-                                    OnlineSpeechClient.PUBLIC_ENDPOINTS,
-                                    parameters
-                                ) { attempt, _ ->
-                                    if (attempt > 1) {
-                                        showActiveSegment(
-                                            segment,
-                                            app.getString(
-                                                R.string.status_retrying_public,
-                                                index + 1,
-                                                segments.size
-                                            )
-                                        )
-                                    }
-                                }
-                            } catch (legacyError: Exception) {
-                                legacyError.addSuppressed(huggingFaceError)
-                                throw legacyError
-                            }
-                        }
+                        online.synthesize(customServer, parameters)
                     }
                     try {
                         showActiveSegment(
                             segment,
-                            app.getString(R.string.status_online_playing, index + 1, segments.size)
+                            app.getString(
+                                R.string.status_online_playing,
+                                index + 1,
+                                segments.size
+                            )
                         )
                         audio.play(file)
                     } finally {
@@ -515,13 +677,68 @@ class ReaderViewModel(
             } catch (_: CancellationException) {
                 return@launch
             } catch (error: Exception) {
-                coroutineContext.ensureActive()
+                currentCoroutineContext().ensureActive()
                 showError(onlineError(error))
                 return@launch
             } finally {
                 if (onlineJob === job) onlineJob = null
             }
             completePlayback(token)
+        }
+    }
+
+    private suspend fun synthesizePreset(
+        parameters: OnlineSpeechClient.Parameters,
+        part: Int,
+        total: Int,
+        segment: TextSegmenter.Segment?
+    ): File = try {
+        huggingFace.synthesize(
+            HuggingFaceVitsClient.Parameters(
+                text = parameters.text,
+                speaker = parameters.speaker,
+                noise = parameters.noise,
+                length = parameters.length
+            )
+        ) { stage ->
+            val stringId = when (stage) {
+                HuggingFaceVitsClient.Stage.CONNECTING -> R.string.status_hf_connecting
+                HuggingFaceVitsClient.Stage.WAITING -> R.string.status_hf_waiting
+                HuggingFaceVitsClient.Stage.SYNTHESIZING -> R.string.status_hf_synthesizing
+            }
+            updateSynthesisStatus(segment, app.getString(stringId, part, total))
+        }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (huggingFaceError: Exception) {
+        currentCoroutineContext().ensureActive()
+        updateSynthesisStatus(
+            segment,
+            app.getString(R.string.status_fallback_public, part, total)
+        )
+        try {
+            online.synthesizeFirstAvailable(
+                OnlineSpeechClient.PUBLIC_ENDPOINTS,
+                parameters
+            ) { attempt, _ ->
+                if (attempt > 1) {
+                    updateSynthesisStatus(
+                        segment,
+                        app.getString(R.string.status_retrying_public, part, total)
+                    )
+                }
+            }
+        } catch (legacyError: Exception) {
+            legacyError.addSuppressed(huggingFaceError)
+            throw legacyError
+        }
+    }
+
+    private fun updateSynthesisStatus(segment: TextSegmenter.Segment?, status: String) {
+        if (segment == null) {
+            _uiState.value = _uiState.value.copy(status = status)
+        } else {
+            showActiveSegment(segment, status)
         }
     }
 
@@ -535,7 +752,7 @@ class ReaderViewModel(
             status = app.getString(R.string.status_preparing)
         )
         offlineJob = viewModelScope.launch {
-            val job = coroutineContext[Job]
+            val job = currentCoroutineContext()[Job]
             try {
                 val segments = withContext(Dispatchers.Default) {
                     TextSegmenter.splitWithRanges(
@@ -576,6 +793,7 @@ class ReaderViewModel(
         if (token < 0 || activePlaybackToken != token) return
         activePlaybackToken = -1L
         activeSegments = emptyList()
+        completedPlaysForItem++
         val state = _uiState.value
         _uiState.value = state.copy(
             busy = false,
@@ -584,23 +802,47 @@ class ReaderViewModel(
             highlightEnd = -1
         )
 
+        if (state.playbackMode == PlaybackMode.REPEAT_ONE) {
+            _uiState.value = _uiState.value.copy(
+                currentPlayNumber = completedPlaysForItem % state.playsPerItem + 1
+            )
+            scheduleAutomaticPlayback(token, null)
+            return
+        }
+        if (completedPlaysForItem < state.playsPerItem) {
+            _uiState.value = _uiState.value.copy(currentPlayNumber = completedPlaysForItem + 1)
+            scheduleAutomaticPlayback(token, null)
+            return
+        }
+
+        completedPlaysForItem = 0
+        _uiState.value = _uiState.value.copy(currentPlayNumber = 1)
+        val queue = playbackQueue(state)
         when (state.playbackMode) {
-            PlaybackMode.REPEAT_ONE -> scheduleAutomaticPlayback(token, null)
+            PlaybackMode.REPEAT_ONE -> Unit
             PlaybackMode.SEQUENTIAL -> {
-                val currentIndex = state.savedTexts.indexOfFirst { it.id == state.selectedTextId }
-                val next = if (currentIndex < 0) state.savedTexts.firstOrNull()
-                else state.savedTexts.getOrNull(currentIndex + 1)
-                if (next != null) scheduleAutomaticPlayback(token, next)
+                if (queue.isNotEmpty()) {
+                    val currentIndex = queue.indexOfFirst { it.id == state.selectedTextId }
+                    val nextIndex = if (currentIndex < 0) 0 else (currentIndex + 1) % queue.size
+                    scheduleAutomaticPlayback(token, queue[nextIndex])
+                }
             }
 
             PlaybackMode.SHUFFLE -> {
-                val choices = state.savedTexts.filter { it.id != state.selectedTextId }
-                val pool = if (choices.isNotEmpty()) choices else state.savedTexts
+                val choices = queue.filter { it.id != state.selectedTextId }
+                val pool = if (choices.isNotEmpty()) choices else queue
                 if (pool.isNotEmpty()) {
                     scheduleAutomaticPlayback(token, pool[Random.nextInt(pool.size)])
                 }
             }
         }
+    }
+
+    private fun playbackQueue(state: UiState): List<SavedText> {
+        val playlist = state.playlists.firstOrNull { it.id == state.selectedPlaylistId }
+            ?: return state.savedTexts
+        val byId = state.savedTexts.associateBy(SavedText::id)
+        return playlist.documentIds.mapNotNull(byId::get)
     }
 
     private fun scheduleAutomaticPlayback(token: Long, document: SavedText?) {
@@ -610,11 +852,243 @@ class ReaderViewModel(
             if (playbackGeneration != token) return@launch
             advanceJob = null
             if (document != null) {
-                loadDocumentIntoEditor(document, app.getString(R.string.status_next_document, document.title))
+                loadDocumentIntoEditor(
+                    document,
+                    app.getString(R.string.status_next_document, document.title)
+                )
             }
-            play()
+            startCurrentPlayback(token)
         }
     }
+
+    fun downloadCurrentVoice() {
+        val state = _uiState.value
+        val document = state.savedTexts.firstOrNull { it.id == state.selectedTextId }
+        val option = state.voices.firstOrNull { it.id == state.voiceId }
+        if (document == null || document.text != state.text) {
+            showError(app.getString(R.string.error_save_before_download))
+            return
+        }
+        if (option?.online != true) {
+            showError(app.getString(R.string.error_online_voice_required))
+            return
+        }
+        if (state.voiceId == CUSTOM && state.speaker.isBlank()) {
+            showError(app.getString(R.string.error_speaker))
+            return
+        }
+        if (state.voiceId == CUSTOM && !validServer(state.serverUrl)) {
+            showError(app.getString(R.string.error_server_url))
+            return
+        }
+
+        stop(showStatus = false)
+        _uiState.value = _uiState.value.copy(
+            downloadBusy = true,
+            status = app.getString(R.string.status_download_start)
+        )
+        downloadJob = viewModelScope.launch {
+            val job = currentCoroutineContext()[Job]
+            val parts = mutableListOf<File>()
+            try {
+                val publicVoice = state.voiceId != CUSTOM
+                val segments = withContext(Dispatchers.Default) {
+                    TextSegmenter.splitWithRanges(state.text, if (publicVoice) 96 else 180)
+                }
+                val maximumSegments = if (publicVoice) 125 else 80
+                if (segments.size > maximumSegments) {
+                    showError(app.getString(R.string.error_online_length))
+                    return@launch
+                }
+                val speaker = option.onlineSpeaker ?: state.speaker.trim()
+                segments.forEachIndexed { index, segment ->
+                    currentCoroutineContext().ensureActive()
+                    _uiState.value = _uiState.value.copy(
+                        status = app.getString(
+                            R.string.status_download_synthesizing,
+                            index + 1,
+                            segments.size
+                        )
+                    )
+                    val parameters = OnlineSpeechClient.Parameters(
+                        text = segment.text,
+                        speaker = speaker,
+                        format = "wav",
+                        noise = state.noise,
+                        length = state.length
+                    )
+                    parts += if (publicVoice) {
+                        synthesizePreset(parameters, index + 1, segments.size, null)
+                    } else {
+                        online.synthesize(state.serverUrl.trim(), parameters)
+                    }
+                }
+
+                _uiState.value = _uiState.value.copy(
+                    status = app.getString(R.string.status_encoding_mp3)
+                )
+                val directory = File(app.filesDir, "offline_audio")
+                val destination = File(directory, "${document.id}-${state.voiceId}.mp3")
+                val previousPath = document.offlineAudioPath
+                audioExporter.createMp3(parts, destination)
+                textRepository.attachOfflineAudio(
+                    document.id,
+                    destination.absolutePath,
+                    state.voiceId,
+                    textHash(state.text)
+                )
+                if (previousPath != null && previousPath != destination.absolutePath) {
+                    File(previousPath).delete()
+                }
+                refreshLibrary()
+                _uiState.value = _uiState.value.copy(
+                    downloadBusy = false,
+                    status = app.getString(R.string.status_download_complete)
+                )
+            } catch (_: CancellationException) {
+                return@launch
+            } catch (error: Exception) {
+                currentCoroutineContext().ensureActive()
+                val message = when (error) {
+                    is OfflineAudioExporter.UnsupportedWave,
+                    is OfflineAudioExporter.EncodingFailed ->
+                        app.getString(R.string.error_mp3_encoding)
+                    else -> onlineError(error)
+                }
+                showError(message)
+            } finally {
+                withContext(NonCancellable + Dispatchers.IO) { parts.forEach(File::delete) }
+                if (downloadJob === job) downloadJob = null
+                if (_uiState.value.downloadBusy) {
+                    _uiState.value = _uiState.value.copy(downloadBusy = false)
+                }
+            }
+        }
+    }
+
+    fun removeDownloadedAudio() {
+        val document = currentDocument() ?: return
+        val path = document.offlineAudioPath ?: return
+        if (_uiState.value.busy) stop(showStatus = false)
+        viewModelScope.launch {
+            try {
+                textRepository.clearOfflineAudio(document.id)
+                withContext(Dispatchers.IO) { File(path).delete() }
+                refreshLibrary()
+                _uiState.value = _uiState.value.copy(
+                    status = app.getString(R.string.status_download_removed)
+                )
+            } catch (_: Exception) {
+                showStorageError()
+            }
+        }
+    }
+
+    fun downloadedAudioFileName(): String? {
+        val document = currentDocument() ?: return null
+        val path = document.offlineAudioPath ?: return null
+        if (!File(path).isFile) return null
+        return sanitizeFileName("${document.title}-${voiceDisplayName(document.offlineVoiceId)}.mp3")
+    }
+
+    fun exportDownloadedAudio(destination: Uri) {
+        val document = currentDocument() ?: return
+        val source = document.offlineAudioPath?.let(::File)?.takeIf(File::isFile) ?: run {
+            showError(app.getString(R.string.error_download_missing))
+            return
+        }
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    app.contentResolver.openOutputStream(destination, "w")?.use { output ->
+                        source.inputStream().use { input -> input.copyTo(output) }
+                    } ?: throw java.io.IOException("Cannot open destination")
+                }
+                _uiState.value = _uiState.value.copy(
+                    status = app.getString(R.string.status_export_complete)
+                )
+            } catch (_: Exception) {
+                showError(app.getString(R.string.error_export))
+            }
+        }
+    }
+
+    private fun currentDocument(): SavedText? {
+        val state = _uiState.value
+        return state.savedTexts.firstOrNull { it.id == state.selectedTextId }
+    }
+
+    private fun voiceDisplayName(id: String?): String =
+        _uiState.value.voices.firstOrNull { it.id == id }?.name
+            ?.replace("（在线）", "")
+            ?: app.getString(R.string.online_voice)
+
+    fun setTimerMinutes(value: Int) {
+        val minutes = value.coerceIn(1, 1_440)
+        preferences.edit().putInt(PREF_TIMER_MINUTES, minutes).apply()
+        _uiState.value = _uiState.value.copy(timerMinutes = minutes)
+    }
+
+    fun scheduleTimedPlayback() {
+        if (_uiState.value.text.isBlank()) {
+            showError(app.getString(R.string.error_empty))
+            return
+        }
+        val target = System.currentTimeMillis() + _uiState.value.timerMinutes * 60_000L
+        preferences.edit().putLong(PREF_TIMER_TARGET, target).apply()
+        _uiState.value = _uiState.value.copy(
+            scheduledPlaybackAt = target,
+            timerRemainingSeconds = remainingSeconds(target),
+            status = app.getString(R.string.status_timer_scheduled, _uiState.value.timerMinutes)
+        )
+        startTimerMonitor()
+    }
+
+    fun cancelTimedPlayback() {
+        timerJob?.cancel()
+        timerJob = null
+        preferences.edit().remove(PREF_TIMER_TARGET).apply()
+        _uiState.value = _uiState.value.copy(
+            scheduledPlaybackAt = null,
+            timerRemainingSeconds = 0,
+            status = app.getString(R.string.status_timer_cancelled)
+        )
+    }
+
+    private fun startTimerMonitor() {
+        timerJob?.cancel()
+        val target = _uiState.value.scheduledPlaybackAt ?: return
+        timerJob = viewModelScope.launch {
+            while (true) {
+                val remaining = remainingSeconds(target)
+                _uiState.value = _uiState.value.copy(timerRemainingSeconds = remaining)
+                if (remaining <= 0) break
+                delay(1_000)
+            }
+            if (_uiState.value.scheduledPlaybackAt != target) return@launch
+            preferences.edit().remove(PREF_TIMER_TARGET).apply()
+            _uiState.value = _uiState.value.copy(
+                scheduledPlaybackAt = null,
+                timerRemainingSeconds = 0,
+                status = app.getString(R.string.status_timer_starting)
+            )
+            while (!_uiState.value.storageReady) delay(100)
+            val state = _uiState.value
+            val option = state.voices.firstOrNull { it.id == state.voiceId }
+            if (option?.online != true && cachedAudioFor(state) == null && !state.ttsReady) {
+                var attempts = 0
+                while (!_uiState.value.ttsReady && attempts < 150) {
+                    delay(100)
+                    attempts++
+                }
+            }
+            play()
+            timerJob = null
+        }
+    }
+
+    private fun remainingSeconds(target: Long): Long =
+        ((target - System.currentTimeMillis()).coerceAtLeast(0L) + 999L) / 1_000L
 
     private fun validServer(value: String): Boolean {
         val url = value.trim().toHttpUrlOrNull()
@@ -622,8 +1096,7 @@ class ReaderViewModel(
     }
 
     private fun onlineError(error: Exception): String = when (error) {
-        is OnlineSpeechClient.AllServersUnavailable ->
-            app.getString(R.string.error_public_service)
+        is OnlineSpeechClient.AllServersUnavailable -> app.getString(R.string.error_public_service)
         is OnlineSpeechClient.HttpFailure -> app.getString(R.string.error_http, error.code)
         is OnlineSpeechClient.InvalidAudio -> app.getString(R.string.error_non_audio)
         is OnlineSpeechClient.AudioTooLarge -> app.getString(R.string.error_audio_too_large)
@@ -640,21 +1113,27 @@ class ReaderViewModel(
         playbackGeneration++
         activePlaybackToken = -1L
         activeSegments = emptyList()
+        completedPlaysForItem = 0
         advanceJob?.cancel()
         advanceJob = null
         offlineJob?.cancel()
         offlineJob = null
         onlineJob?.cancel()
         onlineJob = null
+        downloadJob?.cancel()
+        downloadJob = null
         runCatching { huggingFace.cancelActive() }
         runCatching { online.cancelActive() }
         runCatching { audio.stop() }
         tts.stop()
         _uiState.value = _uiState.value.copy(
             busy = false,
+            downloadBusy = false,
+            currentPlayNumber = 1,
             highlightStart = -1,
             highlightEnd = -1,
-            status = if (showStatus) app.getString(R.string.status_stopped) else _uiState.value.status
+            status = if (showStatus) app.getString(R.string.status_stopped)
+            else _uiState.value.status
         )
     }
 
@@ -663,6 +1142,7 @@ class ReaderViewModel(
         activeSegments = emptyList()
         _uiState.value = _uiState.value.copy(
             busy = false,
+            downloadBusy = false,
             highlightStart = -1,
             highlightEnd = -1,
             status = message
@@ -697,7 +1177,7 @@ class ReaderViewModel(
             languageTag = selected,
             ttsReady = true,
             chineseAvailable = chineseAvailable,
-            status = if (current.busy) current.status else app.getString(
+            status = if (current.busy || current.downloadBusy) current.status else app.getString(
                 if (chineseAvailable) R.string.status_ready else R.string.status_no_chinese
             )
         )
@@ -714,7 +1194,7 @@ class ReaderViewModel(
             voices = availableVoices,
             voiceId = safeVoice,
             languages = emptyList(),
-            status = if (_uiState.value.busy) _uiState.value.status
+            status = if (_uiState.value.busy || _uiState.value.downloadBusy) _uiState.value.status
             else app.getString(R.string.status_init_failed)
         )
     }
@@ -738,13 +1218,10 @@ class ReaderViewModel(
 
     override fun onCleared() {
         persistNowBlocking()
+        timerJob?.cancel()
         stop()
         tts.shutdown()
         super.onCleared()
-    }
-
-    companion object {
-        private const val SAVED_STATE_TEXT_LIMIT = 20_000
     }
 
     private fun bumpRevision() {
@@ -756,5 +1233,20 @@ class ReaderViewModel(
     private fun saveTextInSavedState(text: String) {
         if (text.length <= SAVED_STATE_TEXT_LIMIT) saved["text"] = text
         else saved.remove<String>("text")
+    }
+
+    private fun textHash(text: String): String = MessageDigest.getInstance("SHA-256")
+        .digest(text.toByteArray(Charsets.UTF_8))
+        .joinToString("") { "%02x".format(Locale.US, it.toInt() and 0xff) }
+
+    private fun sanitizeFileName(value: String): String = value
+        .replace(Regex("[\\\\/:*?\"<>|]"), "_")
+        .take(100)
+
+    companion object {
+        private const val SAVED_STATE_TEXT_LIMIT = 20_000
+        private const val SETTINGS_NAME = "reader_settings"
+        private const val PREF_TIMER_TARGET = "timer_target"
+        private const val PREF_TIMER_MINUTES = "timer_minutes"
     }
 }

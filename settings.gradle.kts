@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "文字朗读"
+rootProject.name = "原神好声音"
 include(":app")
