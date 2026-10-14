@@ -1,6 +1,6 @@
 # 原神好声音
 
-“原神好声音”是一个单模块 Android 文本朗读应用，使用 Kotlin、Jetpack Compose Material 3、MVVM、Coroutines 和 StateFlow 开发。基础方案调用手机系统 `TextToSpeech`，可离线朗读；需要 AI 音色时，可连接用户自己的 SoVITS 兼容推理服务器。应用不需要账号、API Key 或付费接口，没有广告，也不内置角色音频或模型。
+“原神好声音”是一个单模块 Android 文本朗读应用，使用 Kotlin、Jetpack Compose Material 3、MVVM、Coroutines 和 StateFlow 开发。基础方案调用手机系统 `TextToSpeech`，可离线朗读；需要 AI 音色时，直接调用用户电脑上的 GPT-SoVITS 原生 `/tts` 服务。应用不需要账号、API Key 或付费接口，没有广告，也不内置角色音频或模型。
 
 > 应用已移除音质不理想的神里绫华、优菈、可莉公共在线接口。角色模型与生成音频只能在获得许可的范围内使用；详见本文末尾与 [用户协议](USER_AGREEMENT.md)。
 
@@ -12,7 +12,8 @@
 - 播放队列使用底部抽屉展示当前歌单内全部文稿名称，可直接点选任意文稿开始播放。
 - 系统 TTS 离线朗读，优先 `Locale.CHINA`；显示初始化、朗读、停止和错误状态，并可打开系统语音数据安装页。
 - 系统可用语言与音色列表，语速和音调均可在 0.5x–2.0x 调节。
-- 在线音色只保留“自建 SoVITS 音色（在线）”：服务器地址和说话者名称完全由用户填写，不再请求任何内置公共角色服务。
+- 在线音色只保留“自建 GPT-SoVITS（在线）”：手机只填写电脑地址，客户端按模型包约定发送固定参考音频路径与原文；不上传音频文件。服务器地址、在线语速与随机度会自动保存。
+- 原生中文 `/tts`、`cut5`、单句非流式 WAV；按接口适配说明换算 `speed_factor = 1 / length`、`temperature = 0.8 + noise`，格式固定为 WAV。
 - 文稿可命名保存；点“保存文稿”时名称框保持空白，不会把正文自动当作名称。当前草稿自动保存，退出应用、旋转屏幕或界面进程重建后仍可恢复。
 - 文本由独立 `:text_storage` 进程中的 `ContentProvider + SQLite` 保存，旧版数据库会自动迁移，不会为了升级主动清空文稿。
 - 可创建和删除歌单，把文稿加入或移出歌单；删除歌单不会删除文稿。
@@ -80,16 +81,16 @@
 3. 左下角“音质”打开底部设置面板，集中管理音色、系统 TTS 语言、语速、音调、在线参数和自定义服务器。
 4. 左下偏中的“文稿”切换到文稿与歌单页面。文稿编辑、命名保存、新建、删除、歌单增删、每篇播放次数、定时播放及角色音频下载/导出都集中在该页面。
 
-### 自建 SoVITS 在线音色
+### 神里绫华 v2 / 自建 GPT-SoVITS
 
-1. 点击底部“音质”，选择“自建 SoVITS 音色（在线）”。
-2. 填写自己的推理服务器地址和该服务器识别的 `speaker` 名称。应用没有默认公共服务器，也不会自动把文本发往未知服务。
+1. 电脑先按模型包的启动说明运行 `python api_v2.py -a 0.0.0.0 -p 9880`；确保其推理配置使用已训练完成的神里绫华 v2 GPT/SoVITS 权重，参考音频位于 `D:/AI-TTS/ayaka_v2/ref_ayaka.wav`。可用 `-c` 指定包中的推理配置 YAML。
+2. 手机与电脑连接同一 WiFi，点击 App 底部“音质”，选择“自建 GPT-SoVITS（在线）”，填写 `http://电脑局域网IP:9880`（也接受 `/tts` 地址）。手机不填写参考 WAV 路径和说话者名称。
 3. 输入文本后直接播放，或者先保存并命名文稿再下载离线音频。服务器不可用、超时或返回非音频内容时会显示明确错误，可随时切回系统离线音色。
-4. 音色切换会先安全停止当前播放；旧版本保存的公共音色 ID 会自动回退到系统默认音色，不会因列表项消失而崩溃。
+4. 音色切换会先安全停止当前播放。原生 v2 使用新的缓存音色 ID，避免把旧的低质量 VITS 缓存误当作新模型；旧版选择项会回退到系统默认音色。
 
 ### 下载 MP3 和原始 WAV
 
-1. 先选择自建 SoVITS 音色、填写服务器和 `speaker`，再保存并命名当前文稿；修改文稿后需要再次保存。
+1. 先选择自建 GPT-SoVITS 音色、填写电脑地址，再保存并命名当前文稿；修改文稿后需要再次保存。
 2. 点击“下载 MP3 + 原始 WAV”。应用逐句请求 WAV，在手机本地插入句间静音、合并原始 PCM WAV，并编码一份 MP3，同时保留私有逐句缓存。
 3. 完成后再次播放相同文本和相同音色时，会逐句读取本地缓存，不再联网，并与在线播放一样准确高亮当前发声句。
 4. “导出 MP3”和“导出原始 WAV”会打开 Android 文件选择器，由用户决定保存位置。旧版合并缓存仍可播放和导出，但无法得知精确句子时间；重新下载一次即可启用逐句高亮。
@@ -106,17 +107,29 @@
 
 设定分钟数后点击“开始计时”。应用进程仍存活时，即使界面进入后台，倒计时通常也会继续；如果系统强制结束整个进程，应用无法在后台自行唤醒，重新打开时会恢复目标时间并立即执行已经到期的任务。本版本没有申请精确闹钟权限，也没有常驻前台服务。
 
-## 自建在线接口
+## GPT-SoVITS 原生接口
 
-应用只连接用户填写的地址。当前兼容层向该地址发送 GET 参数 `text`、`speaker`、`format`、`noise`、`length`，服务应以 2xx 直接返回有效 MP3 或 WAV；例如：
+应用自动将电脑根地址规范化为 `/tts`，只连接用户填写的服务器。单句请求示例：
 
 ```text
-http://192.168.1.2:9880/?text=你好&speaker=ayaka-v2&format=wav&noise=0.667&length=1.20
+http://192.168.1.2:9880/tts?text=你好世界&text_lang=zh&ref_audio_path=D:/AI-TTS/ayaka_v2/ref_ayaka.wav&prompt_lang=zh&prompt_text=感觉又多了解了你一些&text_split_method=cut5&batch_size=1&media_type=wav&streaming_mode=false&speed_factor=0.83&temperature=1.467
 ```
 
-如果训练服务使用 GPT-SoVITS 原生 `/tts` 请求体或需要参考音频，请在服务端增加一个上述轻量兼容路由，或在模型交付后同步其确切 API 协议再修改客户端。下载双格式文件时客户端固定请求 WAV；合并和 MP3 编码要求服务返回兼容的 16-bit PCM WAV。
+官方 [api_v2.py](https://github.com/RVC-Boss/GPT-SoVITS/blob/main/api_v2.py) 要求 `ref_audio_path`。按照用户交付的《给APP的接口适配说明.md》，客户端固定发送以下值，不在手机界面要求输入：
 
-客户端校验地址、HTTP 状态、音频头和大小，设置连接、读取与总超时。文本按句切分，单句过长时再按约 180 个 UTF-16 字符切开，最多 80 段；单段返回文件上限 20 MiB。
+```text
+ref_audio_path=D:/AI-TTS/ayaka_v2/ref_ayaka.wav
+prompt_text=感觉又多了解了你一些
+prompt_lang=zh
+```
+
+不要把这个 Windows 路径当成手机上的文件路径。App 不上传参考音频或模型，可以直接连接未经修改的原生 API。另附 [可选服务端启动脚本](server/README.md)，供模型打包方在电脑固定或覆盖参考音频（例如后续接优菈）；使用它不是本次神里绫华 v2 接入的前提。
+
+成功响应是 `HTTP 200`、`Content-Type: audio/wav`，body 直接存为 WAV 播放。客户端会显示 JSON 中的 `message`、`Exception` 或 `detail`，而不会把模型错误都归成“网络不可用”。即使错误 JSON 使用 200 状态也会被识别。连接超时 10 秒，读取超时 120 秒，总调用上限 180 秒，可随时停止取消。
+
+下载时同样固定请求 WAV；合并与 MP3 编码要求 16-bit PCM WAV。手机播放与导出保留 350 毫秒句间停顿。在线语速改动作用于下次合成，已下载音频保留下载时的音色和语速；更换模型或语速后需要重新下载。
+
+客户端校验地址、HTTP 状态、音频头和大小，设置连接、读取与总超时。文本按句切分，单句过长时再按约 180 个 UTF-16 字符切开，最多 80 段；单段返回文件上限 60 MiB。
 
 ## 存储、权限和隐私
 
@@ -127,10 +140,11 @@ http://192.168.1.2:9880/?text=你好&speaker=ayaka-v2&format=wav&noise=0.667&len
 
 ## 已知限制
 
-- 应用不提供公共角色语音服务器。自建 SoVITS 服务的部署、可用性、音质、鉴权与合规由用户和服务提供者负责；系统 TTS 仍是无网络时的基础方案。
+- 应用不提供公共角色语音服务器。自建 GPT-SoVITS 服务的部署、可用性、音质、鉴权与合规由用户和服务提供者负责；系统 TTS 仍是无网络时的基础方案。
 - 下载依赖自建服务成功返回兼容 WAV。超长文稿会消耗较多时间、网络、存储和电量。
 - 定时播放不是系统级精确闹钟；应用进程被系统彻底结束后，无法在指定时刻主动唤醒。
-- 未集成 Sherpa-ONNX。单个 `.onnx` 文件通常不足以运行 TTS，还需要匹配的配置、词表、分词和前后处理；当前训练中的 SoVITS 模型也不会被打包进 APK，待服务 API 确定后通过自建服务器接入。
+- 未集成 Sherpa-ONNX。GPT-SoVITS 的权重在电脑运行，不会直接打包进 APK；下载后的逐句 WAV/MP3 可以在手机断网播放。
+- 当前验收使用本地模拟的原生 `/tts` 服务与真实可解码 PCM WAV；尚未访问用户的电脑局域网 IP，也没有收到模型权重和参考音频，不能声称已试听神里绫华 v2 实际音质。模型包就绪后仍需在同一 WiFi 下实测。
 - App 图标是原创“冰蓝星形 + 声波”风格，不是《原神》官方图标，也不表示与米哈游存在官方关系。
 
 ## 自动构建与测试
@@ -142,11 +156,14 @@ GitHub Actions 会使用 JDK 17、API 37 和 Android 35 x86_64 模拟器执行�
 - 新版底部导航、音色抽屉和三态播放模式循环切换；
 - Activity 重建后的草稿恢复；
 - 输入完整正文后，文稿名称输入框仍为空白；
-- 本地模拟 SoVITS 兼容 HTTP 服务返回有效 WAV；
+- 本地原生 `/tts` 请求参数、中文编码、地址规范化、WAV 下载和 Android MediaPlayer 实际解码播放；
+- HTTP 400 JSON 和 HTTP 200 错误 JSON 均显示具体模型错误；
+- 电脑地址输入与 Activity 重建恢复；
+- 不依赖 GPU 的服务端参考音频参数补全测试；
 - 每个中文句号、问号和感叹号都形成独立播放段及准确文本范围；
 - 两段 16-bit PCM WAV 的真实合并、350 毫秒句间静音、原始 WAV 文件头检查、Jump3r MP3 编码和 MP3 文件头检查。
 
-**3.1 构建状态：已通过。** 2026-10-14 的 [GitHub Actions 构建与 Android 35 模拟器测试](https://github.com/15978440429a-sketch/-/actions/runs/38523347982) 全部成功，对应构建提交 `bdfa73d13c2f5cb9c13caa4f5926a817ef9e0741`。生成的 APK 为 19,817,749 字节，SHA-256：`bf5c1632789346190a77e890eec271e66d722b53efb8ed2d1ef7910e32f4113a`。
+**3.2 构建状态：待本次构建验证。** 上一版 3.1 的 [构建与 Android 35 模拟器测试](https://github.com/15978440429a-sketch/-/actions/runs/38523347982) 已成功；新版构建完成后更新本节。
 
 ## 版权与使用条件
 
@@ -186,4 +203,8 @@ app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
 app/src/main/res/values/strings.xml
 app/src/androidTest/java/com/example/texttospeech/OnlineSpeechClientInstrumentedTest.kt
 app/src/androidTest/java/com/example/texttospeech/VoiceAndStorageSmokeTest.kt
+server/start_ayaka_api.py
+server/start_ayaka_api.bat
+server/test_fixed_reference.py
+server/README.md
 ```

@@ -6,8 +6,7 @@ data class VoiceOption(
     val language: String,
     val source: String,
     val online: Boolean,
-    val systemVoiceName: String? = null,
-    val onlineSpeaker: String? = null
+    val systemVoiceName: String? = null
 )
 
 data class LanguageOption(val tag: String, val label: String)
@@ -49,9 +48,7 @@ data class UiState(
     val pitch: Float = 1f,
     val noise: Float = 0.667f,
     val length: Float = 1.2f,
-    val format: String = "mp3",
     val serverUrl: String = "",
-    val speaker: String = "",
     val voices: List<VoiceOption> = emptyList(),
     val languages: List<LanguageOption> = emptyList(),
     val savedTexts: List<SavedText> = emptyList(),
@@ -77,4 +74,5 @@ data class UiState(
 )
 
 const val SYSTEM_DEFAULT = "system.default"
-const val CUSTOM = "online.custom"
+// A new ID keeps old VITS downloads from being mistaken for the native v2 model.
+const val CUSTOM = "online.sovits.v2"

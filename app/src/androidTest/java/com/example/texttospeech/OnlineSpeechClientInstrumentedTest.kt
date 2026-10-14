@@ -3,9 +3,14 @@ package com.example.texttospeech
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.example.texttospeech.network.OnlineSpeechClient
+import com.example.texttospeech.playback.AudioFilePlayer
 import com.example.texttospeech.playback.OfflineAudioExporter
 import com.example.texttospeech.util.TextSegmenter
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -37,28 +42,87 @@ class OnlineSpeechClientInstrumentedTest {
     }
 
     @Test
-    fun downloadsAudioFromCustomSovitsCompatibleServer() = runBlocking {
-        OneShotHttpServer(200, validWav(), "audio/wav").use { server ->
+    fun requestsNativeSovitsParametersAndPlaysReturnedWav() = runBlocking {
+        OneShotHttpServer(200, pcmWave(frequency = 440.0), "audio/wav").use { server ->
             val context = InstrumentationRegistry.getInstrumentation().targetContext
             val client = OnlineSpeechClient(context)
             val audio = client.synthesize(
                 server.url,
                 OnlineSpeechClient.Parameters(
                     text = "你好",
-                    speaker = "神里绫华-v2",
-                    format = "wav",
-                    noise = 0.667f,
-                    length = 1.2f
+                    speedFactor = 1.25f,
+                    temperature = 1.467f
                 )
             )
 
             try {
                 assertTrue(audio.exists())
-                assertEquals(128L, audio.length())
+                assertEquals(64_044L, audio.length())
                 assertEquals(1, server.requestCount.get())
+                val requestedUrl = (server.url.trimEnd('/') + server.requestTarget).toHttpUrl()
+                assertEquals("/tts", requestedUrl.encodedPath)
+                assertEquals("你好", requestedUrl.queryParameter("text"))
+                assertEquals("zh", requestedUrl.queryParameter("text_lang"))
+                assertEquals("zh", requestedUrl.queryParameter("prompt_lang"))
+                assertEquals("cut5", requestedUrl.queryParameter("text_split_method"))
+                assertEquals("1", requestedUrl.queryParameter("batch_size"))
+                assertEquals("wav", requestedUrl.queryParameter("media_type"))
+                assertEquals("false", requestedUrl.queryParameter("streaming_mode"))
+                assertEquals("1.25", requestedUrl.queryParameter("speed_factor"))
+                assertEquals("D:/AI-TTS/ayaka_v2/ref_ayaka.wav", requestedUrl.queryParameter("ref_audio_path"))
+                assertEquals("感觉又多了解了你一些", requestedUrl.queryParameter("prompt_text"))
+                assertEquals("1.467", requestedUrl.queryParameter("temperature"))
+                assertNull(requestedUrl.queryParameter("speaker"))
+                assertNull(requestedUrl.queryParameter("format"))
+                assertNull(requestedUrl.queryParameter("noise"))
+                assertNull(requestedUrl.queryParameter("length"))
+                withContext(Dispatchers.Main) { AudioFilePlayer().play(audio) }
             } finally {
                 audio.delete()
             }
+        }
+    }
+
+    @Test
+    fun acceptsBaseAddressOrNativeEndpointWithoutDuplicateTts() {
+        val parameters = OnlineSpeechClient.Parameters("你好 & 世界？")
+        val root = OnlineSpeechClient.buildRequestUrl("http://192.168.1.2:9880", parameters)
+        val endpoint = OnlineSpeechClient.buildRequestUrl(
+            "http://192.168.1.2:9880/tts/?ref_audio_path=client.wav&speaker=old", parameters
+        )
+        assertEquals(root, endpoint)
+        assertEquals("你好 & 世界？", root.queryParameter("text"))
+        assertEquals("D:/AI-TTS/ayaka_v2/ref_ayaka.wav", endpoint.queryParameter("ref_audio_path"))
+        assertNull(endpoint.queryParameter("speaker"))
+    }
+
+    @Test
+    fun reportsNativeJsonErrorsInsteadOfPretendingPhoneIsOffline() = runBlocking {
+        OneShotHttpServer(
+            400,
+            "{\"message\":\"tts failed\",\"Exception\":\"reference audio is missing\"}".toByteArray(),
+            "application/json"
+        ).use { server ->
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            val failure = runCatching {
+                OnlineSpeechClient(context).synthesize(server.url, OnlineSpeechClient.Parameters("你好"))
+            }.exceptionOrNull()
+            assertTrue(failure is OnlineSpeechClient.ServerFailure)
+            failure as OnlineSpeechClient.ServerFailure
+            assertEquals(400, failure.code)
+            assertTrue(failure.detail.contains("reference audio is missing"))
+        }
+    }
+
+    @Test
+    fun rejectsJsonReturnedWithSuccessStatus() = runBlocking {
+        OneShotHttpServer(200, "{\"message\":\"model not ready\"}".toByteArray(), "application/json").use { server ->
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            val failure = runCatching {
+                OnlineSpeechClient(context).synthesize(server.url, OnlineSpeechClient.Parameters("你好"))
+            }.exceptionOrNull()
+            assertTrue(failure is OnlineSpeechClient.ServerFailure)
+            assertEquals("model not ready", (failure as OnlineSpeechClient.ServerFailure).detail)
         }
     }
 
@@ -84,8 +148,8 @@ class OnlineSpeechClientInstrumentedTest {
             assertEquals(mp3.absolutePath, result.mp3.absolutePath)
             assertEquals(wav.absolutePath, result.wav.absolutePath)
             assertTrue(wav.length() > 44)
-            val expectedPauseBytes = (22_050L * 350L / 1_000L) * 2L
-            assertEquals(44L + 44_100L * 2L + expectedPauseBytes, wav.length())
+            val expectedPauseBytes = (32_000L * 350L / 1_000L) * 2L
+            assertEquals(44L + 64_000L * 2L + expectedPauseBytes, wav.length())
             assertEquals("RIFF", wav.inputStream().use { input ->
                 ByteArray(4).also { input.read(it) }.toString(StandardCharsets.US_ASCII)
             })
@@ -104,7 +168,7 @@ class OnlineSpeechClientInstrumentedTest {
     }
 
     private fun pcmWave(frequency: Double): ByteArray {
-        val sampleRate = 22_050
+        val sampleRate = 32_000
         val sampleCount = sampleRate
         val dataSize = sampleCount * 2
         return ByteBuffer.allocate(44 + dataSize).order(ByteOrder.LITTLE_ENDIAN).apply {
@@ -128,11 +192,6 @@ class OnlineSpeechClientInstrumentedTest {
         }.array()
     }
 
-    private fun validWav(): ByteArray = ByteArray(128).also { bytes ->
-        "RIFF".toByteArray(StandardCharsets.US_ASCII).copyInto(bytes, destinationOffset = 0)
-        "WAVE".toByteArray(StandardCharsets.US_ASCII).copyInto(bytes, destinationOffset = 8)
-    }
-
     private class OneShotHttpServer(
         private val statusCode: Int,
         private val body: ByteArray,
@@ -141,6 +200,9 @@ class OnlineSpeechClientInstrumentedTest {
         private val server = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
         private val executor = Executors.newSingleThreadExecutor()
         val requestCount = AtomicInteger(0)
+        @Volatile
+        var requestTarget: String = ""
+            private set
         val url = "http://127.0.0.1:${server.localPort}/"
 
         init {
@@ -155,6 +217,7 @@ class OnlineSpeechClientInstrumentedTest {
             requestCount.incrementAndGet()
             socket.soTimeout = 5_000
             val reader = socket.getInputStream().bufferedReader(StandardCharsets.US_ASCII)
+            requestTarget = reader.readLine().orEmpty().split(' ').getOrElse(1) { "" }
             while (true) {
                 val line = reader.readLine() ?: break
                 if (line.isEmpty()) break

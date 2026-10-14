@@ -86,11 +86,9 @@ class ReaderViewModel(
             languageTag = saved["language"] ?: "zh-CN",
             rate = saved["rate"] ?: 1f,
             pitch = saved["pitch"] ?: 1f,
-            noise = saved["noise"] ?: 0.667f,
-            length = saved["length"] ?: 1.2f,
-            format = saved["format"] ?: "mp3",
-            serverUrl = saved["server"] ?: "",
-            speaker = saved["speaker"] ?: "",
+            noise = saved["noise"] ?: preferences.getFloat(PREF_ONLINE_NOISE, 0.667f),
+            length = saved["length"] ?: preferences.getFloat(PREF_ONLINE_LENGTH, 1.2f),
+            serverUrl = saved["server"] ?: preferences.getString(PREF_SERVER_URL, "").orEmpty(),
             selectedTextId = saved.get<Long>("selected_text_id"),
             selectedPlaylistId = saved.get<Long>("selected_playlist_id"),
             playbackMode = PlaybackMode.fromStored(saved["playback_mode"]),
@@ -512,29 +510,21 @@ class ReaderViewModel(
     fun setNoise(value: Float) {
         val noise = value.coerceIn(0f, 1f)
         saved["noise"] = noise
+        preferences.edit().putFloat(PREF_ONLINE_NOISE, noise).apply()
         _uiState.value = _uiState.value.copy(noise = noise)
     }
 
     fun setLength(value: Float) {
         val length = value.coerceIn(0.5f, 2f)
         saved["length"] = length
+        preferences.edit().putFloat(PREF_ONLINE_LENGTH, length).apply()
         _uiState.value = _uiState.value.copy(length = length)
-    }
-
-    fun setFormat(value: String) {
-        if (value != "mp3" && value != "wav") return
-        saved["format"] = value
-        _uiState.value = _uiState.value.copy(format = value)
     }
 
     fun setServer(value: String) {
         saved["server"] = value
+        preferences.edit().putString(PREF_SERVER_URL, value).apply()
         _uiState.value = _uiState.value.copy(serverUrl = value)
-    }
-
-    fun setSpeaker(value: String) {
-        saved["speaker"] = value
-        _uiState.value = _uiState.value.copy(speaker = value)
     }
 
     fun play() {
@@ -596,7 +586,7 @@ class ReaderViewModel(
         when {
             cachedSegments.isNotEmpty() -> playDownloadedSegments(cachedSegments, token)
             cached != null -> playDownloadedAudio(state, cached, token)
-            option?.online == true -> playOnline(state, option, token)
+            option?.online == true -> playOnline(state, token)
             else -> playOffline(state, option, token)
         }
     }
@@ -700,17 +690,12 @@ class ReaderViewModel(
         }
     }
 
-    private fun playOnline(state: UiState, option: VoiceOption, token: Long) {
-        if (state.voiceId == CUSTOM && state.speaker.isBlank()) {
-            showError(app.getString(R.string.error_speaker))
-            return
-        }
+    private fun playOnline(state: UiState, token: Long) {
         if (state.voiceId == CUSTOM && !validServer(state.serverUrl)) {
             showError(app.getString(R.string.error_server_url))
             return
         }
         val customServer = state.serverUrl.trim()
-        val speaker = option.onlineSpeaker ?: state.speaker.trim()
         offlineTtsActive = false
         activeSegmentIndex = 0
         _uiState.value = _uiState.value.copy(
@@ -742,11 +727,9 @@ class ReaderViewModel(
                         highlightEnd = -1
                     )
                     val parameters = OnlineSpeechClient.Parameters(
-                        segment.text,
-                        speaker,
-                        state.format,
-                        state.noise,
-                        state.length
+                        text = segment.text,
+                        speedFactor = 1f / state.length,
+                        temperature = 0.8f + state.noise
                     )
                     val file = online.synthesize(customServer, parameters)
                     try {
@@ -953,10 +936,6 @@ class ReaderViewModel(
             showError(app.getString(R.string.error_online_voice_required))
             return
         }
-        if (state.voiceId == CUSTOM && state.speaker.isBlank()) {
-            showError(app.getString(R.string.error_speaker))
-            return
-        }
         if (state.voiceId == CUSTOM && !validServer(state.serverUrl)) {
             showError(app.getString(R.string.error_server_url))
             return
@@ -978,7 +957,6 @@ class ReaderViewModel(
                     showError(app.getString(R.string.error_online_length))
                     return@launch
                 }
-                val speaker = option.onlineSpeaker ?: state.speaker.trim()
                 segments.forEachIndexed { index, segment ->
                     currentCoroutineContext().ensureActive()
                     _uiState.value = _uiState.value.copy(
@@ -990,10 +968,8 @@ class ReaderViewModel(
                     )
                     val parameters = OnlineSpeechClient.Parameters(
                         text = segment.text,
-                        speaker = speaker,
-                        format = "wav",
-                        noise = state.noise,
-                        length = state.length
+                        speedFactor = 1f / state.length,
+                        temperature = 0.8f + state.noise
                     )
                     parts += online.synthesize(state.serverUrl.trim(), parameters)
                 }
@@ -1256,7 +1232,11 @@ class ReaderViewModel(
     }
 
     private fun onlineError(error: Exception): String = when (error) {
-        is OnlineSpeechClient.HttpFailure -> app.getString(R.string.error_http, error.code)
+        is OnlineSpeechClient.ServerFailure -> if (error.detail.contains("ref_audio_path", ignoreCase = true)) {
+            app.getString(R.string.error_reference_not_fixed)
+        } else {
+            app.getString(R.string.error_sovits_response, error.code, error.detail)
+        }
         is OnlineSpeechClient.InvalidAudio -> app.getString(R.string.error_non_audio)
         is OnlineSpeechClient.AudioTooLarge -> app.getString(R.string.error_audio_too_large)
         is OnlineSpeechClient.InvalidAddress -> app.getString(R.string.error_server_url)
@@ -1426,6 +1406,9 @@ class ReaderViewModel(
         private const val SETTINGS_NAME = "reader_settings"
         private const val PREF_TIMER_TARGET = "timer_target"
         private const val PREF_TIMER_MINUTES = "timer_minutes"
+        private const val PREF_SERVER_URL = "sovits_server_url"
+        private const val PREF_ONLINE_NOISE = "sovits_online_noise"
+        private const val PREF_ONLINE_LENGTH = "sovits_online_length"
         private const val SENTENCE_PAUSE_MILLIS = 350L
         private val SEGMENT_FILE_PATTERN = Regex("(\\d{4})_(\\d+)_(\\d+)\\.wav")
     }

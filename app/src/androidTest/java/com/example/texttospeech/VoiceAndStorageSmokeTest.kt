@@ -27,8 +27,20 @@ class VoiceAndStorageSmokeTest {
         composeRule.onNodeWithTag("mode_cycle").performClick().assertTextContains("顺序")
 
         composeRule.onNodeWithTag("quality_settings").performClick()
-        selectVoiceFromSettings("online.custom")
+        selectVoiceFromSettings("online.sovits.v2")
         selectVoiceFromSettings("system.default")
+    }
+
+    @Test
+    fun nativeSovitsNeedsOnlyComputerAddressAndRestoresItAfterRecreation() {
+        composeRule.onNodeWithTag("quality_settings").performClick()
+        selectVoiceFromSettings("online.sovits.v2")
+        val address = "http://192.168.1.2:9880"
+        composeRule.onNodeWithTag("sovits_server_input")
+            .performScrollTo().performTextReplacement(address)
+        composeRule.activityRule.scenario.recreate()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("sovits_server_input").performScrollTo().assertTextContains(address)
     }
 
     @Test

@@ -96,7 +96,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.texttospeech.model.CUSTOM
 import com.example.texttospeech.model.PlaybackMode
 import com.example.texttospeech.model.Playlist
 import com.example.texttospeech.model.SYSTEM_DEFAULT
@@ -1562,50 +1561,36 @@ private fun VoiceDetail(voice: VoiceOption) {
 @Composable
 private fun OnlineSettings(ui: UiState, reader: ReaderViewModel) {
     Text(stringResource(R.string.online_options), style = MaterialTheme.typography.titleMedium)
-    Text(stringResource(R.string.noise, ui.noise))
-    Slider(
-        value = ui.noise,
-        onValueChange = reader::setNoise,
-        valueRange = 0f..1f,
-        steps = 19
+    OutlinedTextField(
+        value = ui.serverUrl,
+        onValueChange = reader::setServer,
+        label = { Text(stringResource(R.string.custom_server)) },
+        placeholder = { Text(stringResource(R.string.server_hint)) },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth().testTag("sovits_server_input")
     )
-    Text(stringResource(R.string.length, ui.length))
+    Text(stringResource(R.string.custom_contract), style = MaterialTheme.typography.bodySmall)
+    Text(stringResource(R.string.online_speech_rate, 1f / ui.length))
     Slider(
         value = ui.length,
         onValueChange = reader::setLength,
         valueRange = 0.5f..2f,
-        steps = 14
+        steps = 14,
+        modifier = Modifier.testTag("online_rate_slider")
     )
-    TextButton(onClick = { reader.setFormat(if (ui.format == "mp3") "wav" else "mp3") }) {
-        Text(stringResource(R.string.format, ui.format))
-    }
-    if (ui.voiceId != CUSTOM) {
-        Text(
-            stringResource(R.string.hf_format_note),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
-    if (ui.voiceId == CUSTOM) {
-        Text(stringResource(R.string.custom_server), style = MaterialTheme.typography.titleMedium)
-        OutlinedTextField(
-            value = ui.serverUrl,
-            onValueChange = reader::setServer,
-            label = { Text(stringResource(R.string.custom_server)) },
-            placeholder = { Text(stringResource(R.string.server_hint)) },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth()
-        )
-        OutlinedTextField(
-            value = ui.speaker,
-            onValueChange = reader::setSpeaker,
-            label = { Text(stringResource(R.string.custom_speaker)) },
-            placeholder = { Text(stringResource(R.string.speaker_hint)) },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth()
-        )
-        Text(stringResource(R.string.custom_contract), style = MaterialTheme.typography.bodySmall)
-    }
+    Text(stringResource(R.string.online_randomness, 0.8f + ui.noise))
+    Slider(
+        value = ui.noise,
+        onValueChange = reader::setNoise,
+        valueRange = 0f..1f,
+        steps = 19,
+        modifier = Modifier.testTag("online_randomness_slider")
+    )
+    Text(
+        stringResource(R.string.sovits_format_note),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
 }
 
 @Composable
